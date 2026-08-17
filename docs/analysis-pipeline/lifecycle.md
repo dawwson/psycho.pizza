@@ -13,24 +13,24 @@ Pizza DB의 `analysis_request`를 lifecycle의 기준으로 사용하는 이유�
 ```mermaid
 sequenceDiagram
     participant Client
-    participant PizzaAPI as Pizza API
-    participant PizzaDB as Pizza DB
-    participant MemoryQueue as In-memory queue
-    participant Worker as Pizza worker
-    participant RequestQueue as SQS request queue
+    participant PizzaAPI
+    participant PizzaDB
+    participant MemoryQueue
+    participant Worker
+    participant RequestQueue
     participant Pickle
-    participant ResponseQueue as SQS response queue
+    participant ResponseQueue
 
     Client->>PizzaAPI: 분석 요청 생성
     PizzaAPI->>PizzaDB: AnalysisRequest(QUEUED), AnalysisReport 저장
     PizzaAPI-->>MemoryQueue: transaction commit 후 jobId enqueue
     Worker->>MemoryQueue: jobId take
-    Worker->>PizzaDB: QUEUED → RUNNING
+    Worker->>PizzaDB: QUEUED to RUNNING
     Worker->>Worker: 분석 입력 계산
     Worker->>RequestQueue: 요청 메시지 전송
     RequestQueue-->>Pickle: 요청 전달
     Pickle-->>ResponseQueue: 성공 결과 통지
-    ResponseQueue-->>PizzaDB: RUNNING → DONE, report 갱신
+    ResponseQueue-->>PizzaDB: RUNNING to DONE, report 갱신
 ```
 
 현재 코드에서 확인되는 동작은 다음과 같습니다.
@@ -105,9 +105,10 @@ stateDiagram-v2
 - 외부 응답에는 기존 상태 이름과 필드를 유지합니다.
 - 요청 생성 성공은 Pickle 전달 성공을 의미하지 않습니다.
 
-### Pizza Dispatcher
+### Pizza worker와 DB 기반 dispatch
 
-- 전송 가능한 `QUEUED` 요청을 DB에서 조회합니다.
+- Pizza worker는 유지하며 인메모리 큐 대신 DB에서 처리 가능한 `QUEUED` 요청을 조회합니다.
+- worker는 분석 입력을 계산한 뒤 그 결과로 request 메시지를 구성합니다.
 - 전송 시도와 다음 재시도 가능 시각을 영속화합니다.
 - SQS 전송 성공 후 `RUNNING`으로 전환합니다.
 - 영구 오류 또는 최대 시도 초과를 `FAILED`로 확정합니다.
@@ -142,7 +143,8 @@ stateDiagram-v2
 
 | 항목 | 현재 | 목표 |
 | --- | --- | --- |
-| Pizza 내부 실행 대기열 | `InMemoryAnalysisJobQueue` | DB 조회 기반 Dispatcher |
+| Pizza worker 작업 조회 | `InMemoryAnalysisJobQueue`에서 작업 ID 대기 | worker가 DB에서 처리 가능한 요청 조회 |
+| 분석 입력 계산 | Pizza worker가 수행 | Pizza worker가 계속 수행 |
 | `RUNNING` 진입 | Pizza worker 처리 시작 전 | SQS 전송 성공 후 |
 | 재시도 정보 | 영속 정보 없음 | 시도 횟수와 시각을 DB에 저장 |
 | 재시작 복구 | 모든 `RUNNING`을 즉시 `QUEUED`로 변경 | 시간과 시도 한도로 정체 요청만 판정 |

@@ -6,12 +6,12 @@ Pizza는 워크스페이스, 프로젝트, 스프린트와 태스크를 관리�
 
 ```mermaid
 flowchart LR
-    Box["Psycho Box<br/>Client"] -->|REST API| Pizza["Psycho Pizza<br/>Domain API"]
-    Pizza --> PizzaDB[("PostgreSQL")]
-    Pizza -->|Analysis request| RequestQueue["SQS Request Queue"]
-    RequestQueue --> Pickle["Psycho Pickle<br/>AI worker"]
-    Pickle --> PickleDB[("Pickle DB")]
-    Pickle -->|Analysis result| ResponseQueue["SQS Response Queue"]
+    Box[Psycho Box Client] -->|REST API| Pizza[Psycho Pizza Domain API]
+    Pizza --> PizzaDB[(PostgreSQL)]
+    Pizza -->|Analysis request| RequestQueue[SQS Request Queue]
+    RequestQueue --> Pickle[Psycho Pickle AI worker]
+    Pickle --> PickleDB[(Pickle DB)]
+    Pickle -->|Analysis result| ResponseQueue[SQS Response Queue]
     ResponseQueue --> Pizza
 ```
 
@@ -19,7 +19,7 @@ flowchart LR
 - **Pizza**는 인증, 워크스페이스와 프로젝트 데이터, 분석 요청 lifecycle 및 분석 리포트를 관리합니다.
 - **Pickle**은 분석 작업을 받아 LLM을 호출하고 처리 결과를 Pizza에 통지합니다.
 
-분석 파이프라인의 상태, 메시지와 실패 처리 규칙은 `docs/analysis-pipeline/`에서 관리합니다.
+분석 파이프라인의 상태, 메시지와 실패 처리 규칙은 [분석 파이프라인 문서](docs/analysis-pipeline/)에서 관리합니다.
 
 ## 기술 스택
 
@@ -127,8 +127,8 @@ GitHub Actions는 `main`, `develop` 대상 pull request와 두 branch의 push에
 
 문서는 다음 기준으로 관리합니다.
 
-- `docs/README.md`: 프로젝트 문서 지도
-- `docs/analysis-pipeline/`: 분석 lifecycle, 메시지 계약과 실패 처리 정책
-- `docs/adr/`: 장기적인 영향을 주는 기술 결정
+- [프로젝트 문서 지도](docs/README.md)
+- [분석 파이프라인](docs/analysis-pipeline/): 분석 lifecycle, 메시지 계약과 실패 처리 정책
+- [Architecture Decision Records](docs/adr/): 장기적인 영향을 주는 기술 결정
 
 문서 작성 및 변경 규칙은 [AGENTS.md](AGENTS.md)를 따릅니다.
