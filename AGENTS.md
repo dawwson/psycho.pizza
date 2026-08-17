@@ -78,7 +78,7 @@ docs/
 - `analysis-pipeline/README.md`: 전체 처리 흐름, 시스템 책임 경계와 세부 문서 링크
 - `analysis-pipeline/lifecycle.md`: 분석 요청 상태 의미, 허용·금지 전이와 전이 주체
 - `analysis-pipeline/message-contract.md`: 요청·성공·실패 메시지 schema와 호환성 규칙
-- `analysis-pipeline/failure-policy.md`: 오류 분류, 재시도, 중복·순서 역전 메시지, 정체 작업과 DLQ 처리
+- `analysis-pipeline/failure-policy.md`: 오류 분류, 재시도, 중복·순서 역전 메시지, `stale job`과 DLQ 처리
 - `analysis-pipeline/testing.md`: 정책별 자동화 테스트와 통합·장애·부하 테스트 범위
 - `analysis-pipeline/operations.md`: 장애 확인, 복구, 재처리와 관측 절차
 - `adr/`: 대안이 존재하고 장기적인 영향을 주는 기술 결정과 선택 이유
