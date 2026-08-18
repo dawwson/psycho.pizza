@@ -77,12 +77,10 @@ Temporary Items
 .CLAUDE/
 .sisyphus/
 
-AGENTS.md
 CLAUDE.md
 GEMINI.md
 
 # Env
 /.env
-/docs/*
 /docs/draft/
 /docs/plan/
