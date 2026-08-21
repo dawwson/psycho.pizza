@@ -82,8 +82,6 @@ fix: 비활성 계정 display name 조회 오류 수정
 docs: 릴리스 전략 문서화
 ```
 
-Squash merge 시 PR 제목이 최종 commit 제목이 되므로 PR 제목도 같은 형식을 따릅니다.
-
 ## 릴리스와 버전
 
 릴리스 버전은 [Semantic Versioning](https://semver.org/)의 `MAJOR.MINOR.PATCH`를 따르고 Git tag에는 `v` 접두사를 붙입니다.
