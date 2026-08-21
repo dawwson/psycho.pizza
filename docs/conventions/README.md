@@ -9,6 +9,7 @@
 | --- | --- |
 | 테스트 계층, 기술 스택, mock과 주석 사용 기준 | [테스트 작성 원칙](testing.md) |
 | AWS 리소스 이름과 공통 태그 규칙 | [AWS 리소스 네이밍 컨벤션](aws-naming-convention.md) |
+| 브랜치, merge, 릴리스와 커밋 운영 기준 | [Git 브랜치·릴리스·커밋 운영 가이드](git-workflow.md) |
 
 ## 적용 원칙
 
