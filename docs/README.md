@@ -11,7 +11,7 @@
 | Pizza와 Pickle이 어떤 메시지를 교환하는가? | [Pizza–Pickle 메시지 계약](analysis-pipeline/message-contract.md) |
 | 오류, 재시도와 중복 메시지를 어떻게 처리하는가? | [분석 실패 처리 정책](analysis-pipeline/failure-policy.md) |
 | 저장소의 테스트는 어떤 기준으로 작성하는가? | [테스트 작성 원칙](conventions/testing.md) |
-| 공통 개발 컨벤션에는 무엇이 있는가? | [개발 컨벤션](conventions/) |
+| 테스트, Git 운영과 AWS naming 등 공통 개발 컨벤션에는 무엇이 있는가? | [개발 컨벤션](conventions/) |
 | 왜 현재 설계를 선택했는가? | [Architecture Decision Records](adr/) |
 
 ## 작성 원칙
