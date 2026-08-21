@@ -1,15 +1,15 @@
 package pizza.psycho.sos.analysis.application.service
 
-import io.kotest.assertions.throwables.shouldThrow
-import io.kotest.core.spec.style.FunSpec
-import io.kotest.matchers.shouldBe
-import io.kotest.matchers.types.shouldBeSameInstanceAs
 import io.mockk.every
 import io.mockk.justRun
 import io.mockk.mockk
 import io.mockk.slot
 import io.mockk.verify
 import io.mockk.verifySequence
+import org.assertj.core.api.Assertions.assertThat
+import org.assertj.core.api.Assertions.catchThrowableOfType
+import org.junit.jupiter.api.Nested
+import org.junit.jupiter.api.Test
 import pizza.psycho.sos.analysis.application.service.dto.AnalysisCommand
 import pizza.psycho.sos.analysis.domain.entity.AnalysisReport
 import pizza.psycho.sos.analysis.domain.entity.AnalysisRequest
@@ -27,166 +27,153 @@ import java.util.UUID
 
 /**
  * [AnalysisRequestService]가 분석 요청을 생성할 때 만드는 DB 데이터와 도메인 이벤트를 고정한다.
- *
  * repository와 event publisher만 mock으로 두고 저장 대상은 실제 엔티티를 사용한다.
- * 따라서 mock이 엔티티 동작을 대신 흉내 내지 않으며, 서비스가 구성한 요청·리포트 값을 그대로 검증할 수 있다.
- * 실제 JPA mapping과 트랜잭션 커밋 이후 이벤트 실행은 이 테스트의 범위가 아니다.
  */
-class AnalysisRequestServiceTests :
-    FunSpec({
-        context("sprint 분석 요청 생성") {
-            test("QUEUED 요청과 초기 리포트를 저장하고 생성 이벤트를 발행한다") {
-                val fixture = ServiceFixture()
-                val command = createCommand()
-                val generatedRequestId = UUID.randomUUID()
-                val generatedAt = Instant.parse("2026-08-18T08:00:00Z")
-                val requestSlot = slot<AnalysisRequest>()
-                val reportSlot = slot<AnalysisReport>()
-                val eventSlot = slot<AnalysisRequestCreatedEvent>()
+class AnalysisRequestServiceTests {
+    @Nested
+    inner class CreateSprintAnalysisRequest {
+        @Test
+        fun `QUEUED 요청과 초기 리포트를 저장하고 생성 이벤트를 발행한다`() {
+            // Given: fixture는 service만 실제 객체로 만들고 repository와 publisher는 mock으로 격리한다.
+            val fixture = ServiceFixture()
+            val command = createCommand()
+            val generatedRequestId = UUID.randomUUID()
+            val generatedAt = Instant.parse("2026-08-18T08:00:00Z")
+            // slot은 mock 메서드에 실제로 전달된 인자를 나중에 꺼내 검증하기 위한 상자다.
+            val requestSlot = slot<AnalysisRequest>()
+            val reportSlot = slot<AnalysisReport>()
+            val eventSlot = slot<AnalysisRequestCreatedEvent>()
 
-                // 실제 JPA가 save 시 채워주는 식별자와 생성 시각을 repository stub에서 재현한다.
-                every { fixture.analysisRequestRepository.save(capture(requestSlot)) } answers {
-                    firstArg<AnalysisRequest>().apply {
-                        id = generatedRequestId
-                        createdAt = generatedAt
-                    }
-                }
-                every { fixture.analysisReportRepository.save(capture(reportSlot)) } answers { firstArg() }
-                justRun { fixture.domainEventPublisher.publish(capture(eventSlot)) }
-
-                val result = fixture.service.createSprintAnalysisRequest(command)
-
-                val savedRequest = requestSlot.captured
-                savedRequest.id shouldBe generatedRequestId
-                savedRequest.workspaceId shouldBe command.workspaceId
-                savedRequest.targetType shouldBe AnalysisTargetType.SPRINT
-                savedRequest.targetId shouldBe command.sprintId
-                savedRequest.requestedBy shouldBe command.requesterId
-                savedRequest.status shouldBe AnalysisRequestStatus.QUEUED
-
-                // 초기 리포트는 AI 결과가 도착하기 전에 metric 계산 결과를 담을 빈 그릇으로 함께 생성된다.
-                val savedReport = reportSlot.captured
-                savedReport.analysisRequestId shouldBe generatedRequestId
-                savedReport.workspaceId shouldBe command.workspaceId
-                savedReport.targetType shouldBe AnalysisTargetType.SPRINT
-                savedReport.targetId shouldBe command.sprintId
-                savedReport.scoreTotal shouldBe 0
-                savedReport.scoreVersion shouldBe "v2"
-                savedReport.categoryPenalties shouldBe "[]"
-                savedReport.penaltyDetails shouldBe "[]"
-                savedReport.aiInsight shouldBe null
-                savedReport.runId shouldBe null
-
-                // 반환값과 후속 queue 작업을 시작하는 이벤트는 저장된 요청 ID를 동일하게 사용해야 한다.
-                result.id shouldBe generatedRequestId
-                result.status shouldBe AnalysisRequestStatus.QUEUED.name
-                result.createdAt shouldBe generatedAt
-                eventSlot.captured.analysisRequestId shouldBe generatedRequestId
-
-                // 요청이 저장되어 식별자를 얻은 뒤에만 리포트를 연결하고 생성 이벤트를 발행할 수 있다.
-                verifySequence {
-                    fixture.analysisRequestRepository.save(savedRequest)
-                    fixture.analysisReportRepository.save(savedReport)
-                    fixture.domainEventPublisher.publish(eventSlot.captured)
+            // every { 호출 } returns 값: mock 호출의 고정 반환값을 정한다.
+            // answers는 전달된 인자를 읽거나 변경해야 할 때 사용한다. 여기서는 JPA의 ID/시각 생성을 재현한다.
+            every { fixture.analysisRequestRepository.save(capture(requestSlot)) } answers {
+                // firstArg는 save에 전달된 첫 번째 인자이며 capture와 같은 실제 엔티티다.
+                firstArg<AnalysisRequest>().apply {
+                    id = generatedRequestId
+                    createdAt = generatedAt
                 }
             }
+            every { fixture.analysisReportRepository.save(capture(reportSlot)) } answers { firstArg() }
+            // 반환값이 없는 Unit 메서드는 justRun으로 "정상 호출된다"고 준비한다.
+            justRun { fixture.domainEventPublisher.publish(capture(eventSlot)) }
 
-            test("저장된 요청에 ID가 없으면 리포트와 생성 이벤트를 만들지 않는다") {
-                val fixture = ServiceFixture()
-                val command = createCommand()
-                every { fixture.analysisRequestRepository.save(any<AnalysisRequest>()) } answers {
-                    firstArg<AnalysisRequest>().apply { createdAt = Instant.now() }
-                }
+            // When: 테스트 대상 service를 실제로 실행하는 지점이다.
+            val result = fixture.service.createSprintAnalysisRequest(command)
 
-                val exception =
-                    shouldThrow<DomainException> {
-                        fixture.service.createSprintAnalysisRequest(command)
-                    }
+            // Then 1: slot에서 저장 인자를 꺼내 service가 올바른 엔티티를 만들었는지 상태를 검증한다.
+            val savedRequest = requestSlot.captured
+            assertThat(savedRequest.id).isEqualTo(generatedRequestId)
+            assertThat(savedRequest.workspaceId).isEqualTo(command.workspaceId)
+            assertThat(savedRequest.targetType).isEqualTo(AnalysisTargetType.SPRINT)
+            assertThat(savedRequest.targetId).isEqualTo(command.sprintId)
+            assertThat(savedRequest.requestedBy).isEqualTo(command.requesterId)
+            assertThat(savedRequest.status).isEqualTo(AnalysisRequestStatus.QUEUED)
 
-                exception.errorCode shouldBe AnalysisErrorCode.ANALYSIS_REQUEST_ID_NOT_GENERATED
-                // 연결 키가 없으면 유효한 초기 리포트나 생성 이벤트를 만들 수 없으므로 즉시 중단해야 한다.
-                verify(exactly = 0) { fixture.analysisReportRepository.save(any<AnalysisReport>()) }
-                verify(exactly = 0) {
-                    fixture.domainEventPublisher.publish(any<AnalysisRequestCreatedEvent>())
-                }
-            }
+            val savedReport = reportSlot.captured
+            assertThat(savedReport.analysisRequestId).isEqualTo(generatedRequestId)
+            assertThat(savedReport.workspaceId).isEqualTo(command.workspaceId)
+            assertThat(savedReport.targetType).isEqualTo(AnalysisTargetType.SPRINT)
+            assertThat(savedReport.targetId).isEqualTo(command.sprintId)
+            assertThat(savedReport.scoreTotal).isZero()
+            assertThat(savedReport.scoreVersion).isEqualTo("v2")
+            assertThat(savedReport.categoryPenalties).isEqualTo("[]")
+            assertThat(savedReport.penaltyDetails).isEqualTo("[]")
+            assertThat(savedReport.aiInsight).isNull()
+            assertThat(savedReport.runId).isNull()
 
-            test("저장된 요청에 생성 시각이 없으면 리포트와 생성 이벤트를 만들지 않는다") {
-                val fixture = ServiceFixture()
-                val command = createCommand()
-                every { fixture.analysisRequestRepository.save(any<AnalysisRequest>()) } answers {
-                    firstArg<AnalysisRequest>().apply { id = UUID.randomUUID() }
-                }
+            assertThat(result.id).isEqualTo(generatedRequestId)
+            assertThat(result.status).isEqualTo(AnalysisRequestStatus.QUEUED.name)
+            assertThat(result.createdAt).isEqualTo(generatedAt)
+            assertThat(eventSlot.captured.analysisRequestId).isEqualTo(generatedRequestId)
 
-                val exception =
-                    shouldThrow<DomainException> {
-                        fixture.service.createSprintAnalysisRequest(command)
-                    }
-
-                exception.errorCode shouldBe AnalysisErrorCode.ANALYSIS_REQUEST_CREATED_AT_NOT_GENERATED
-                // API 결과에 필수인 createdAt이 없을 때도 불완전한 후속 데이터를 생성하지 않는다.
-                verify(exactly = 0) { fixture.analysisReportRepository.save(any<AnalysisReport>()) }
-                verify(exactly = 0) {
-                    fixture.domainEventPublisher.publish(any<AnalysisRequestCreatedEvent>())
-                }
+            // Then 2: verifySequence는 아래 호출들이 정확한 순서로 일어났는지 검증한다.
+            // 상태 검증만으로는 "이벤트가 저장보다 먼저 발행되는" orchestration 오류를 잡을 수 없다.
+            verifySequence {
+                fixture.analysisRequestRepository.save(savedRequest)
+                fixture.analysisReportRepository.save(savedReport)
+                fixture.domainEventPublisher.publish(eventSlot.captured)
             }
         }
 
-        context("분석 요청 조회") {
-            test("repository가 찾은 요청을 동일한 인스턴스로 반환한다") {
-                val fixture = ServiceFixture()
-                val requestId = UUID.randomUUID()
-                val savedRequest = createRequest().apply { id = requestId }
-                every {
-                    fixture.analysisRequestRepository.findById(requestId)
-                } returns Optional.of(savedRequest)
-
-                val result = fixture.service.getAnalysisRequest(requestId)
-
-                result shouldBeSameInstanceAs savedRequest
+        @Test
+        fun `저장된 요청에 ID가 없으면 리포트와 생성 이벤트를 만들지 않는다`() {
+            val fixture = ServiceFixture()
+            // any<T>()는 인자 값과 무관하게 이 stub을 적용한다는 뜻이다.
+            every { fixture.analysisRequestRepository.save(any<AnalysisRequest>()) } answers {
+                firstArg<AnalysisRequest>().apply { createdAt = Instant.now() }
             }
 
-            test("repository가 요청을 찾지 못하면 ANALYSIS_REQUEST_NOT_FOUND 예외를 던진다") {
-                val fixture = ServiceFixture()
-                val requestId = UUID.randomUUID()
-                every { fixture.analysisRequestRepository.findById(requestId) } returns Optional.empty()
+            val exception =
+                catchThrowableOfType(DomainException::class.java) {
+                    fixture.service.createSprintAnalysisRequest(createCommand())
+                }
 
-                val exception =
-                    shouldThrow<DomainException> {
-                        fixture.service.getAnalysisRequest(requestId)
-                    }
-
-                exception.errorCode shouldBe AnalysisErrorCode.ANALYSIS_REQUEST_NOT_FOUND
-            }
+            assertThat(exception.errorCode).isEqualTo(AnalysisErrorCode.ANALYSIS_REQUEST_ID_NOT_GENERATED)
+            // exactly = 0은 예외 이후 후속 부작용이 발생하지 않았음을 검증한다.
+            verify(exactly = 0) { fixture.analysisReportRepository.save(any<AnalysisReport>()) }
+            verify(exactly = 0) { fixture.domainEventPublisher.publish(any<AnalysisRequestCreatedEvent>()) }
         }
-    })
 
-/**
- * Kotest는 기본적으로 한 spec 인스턴스 안에서 여러 테스트를 실행한다.
- * 각 테스트가 새 fixture를 만들게 해 이전 테스트의 stub 또는 verify 기록이 다음 테스트에 새지 않도록 한다.
- */
+        @Test
+        fun `저장된 요청에 생성 시각이 없으면 리포트와 생성 이벤트를 만들지 않는다`() {
+            val fixture = ServiceFixture()
+            every { fixture.analysisRequestRepository.save(any<AnalysisRequest>()) } answers {
+                firstArg<AnalysisRequest>().apply { id = UUID.randomUUID() }
+            }
+
+            val exception =
+                catchThrowableOfType(DomainException::class.java) {
+                    fixture.service.createSprintAnalysisRequest(createCommand())
+                }
+
+            assertThat(exception.errorCode).isEqualTo(AnalysisErrorCode.ANALYSIS_REQUEST_CREATED_AT_NOT_GENERATED)
+            verify(exactly = 0) { fixture.analysisReportRepository.save(any<AnalysisReport>()) }
+            verify(exactly = 0) { fixture.domainEventPublisher.publish(any<AnalysisRequestCreatedEvent>()) }
+        }
+    }
+
+    @Nested
+    inner class GetAnalysisRequest {
+        @Test
+        fun `repository가 찾은 요청을 동일한 인스턴스로 반환한다`() {
+            val fixture = ServiceFixture()
+            val requestId = UUID.randomUUID()
+            val savedRequest = createRequest().apply { id = requestId }
+            // 실제 DB 대신 repository가 준비한 요청을 반환한다고 가정한다.
+            every { fixture.analysisRequestRepository.findById(requestId) } returns Optional.of(savedRequest)
+
+            val result = fixture.service.getAnalysisRequest(requestId)
+
+            // isSameAs는 equals가 아니라 메모리상 동일한 객체인지 확인한다.
+            assertThat(result).isSameAs(savedRequest)
+        }
+
+        @Test
+        fun `repository가 요청을 찾지 못하면 ANALYSIS_REQUEST_NOT_FOUND 예외를 던진다`() {
+            val fixture = ServiceFixture()
+            val requestId = UUID.randomUUID()
+            every { fixture.analysisRequestRepository.findById(requestId) } returns Optional.empty()
+
+            val exception =
+                catchThrowableOfType(DomainException::class.java) {
+                    fixture.service.getAnalysisRequest(requestId)
+                }
+
+            assertThat(exception.errorCode).isEqualTo(AnalysisErrorCode.ANALYSIS_REQUEST_NOT_FOUND)
+        }
+    }
+}
+
 private class ServiceFixture {
+    // mockk<T>()로 만든 객체는 실제 repository/publisher 코드를 실행하지 않는다.
     val analysisRequestRepository = mockk<AnalysisRequestRepository>()
     val analysisReportRepository = mockk<AnalysisReportRepository>()
     val domainEventPublisher = mockk<DomainEventPublisher>()
-    val service =
-        AnalysisRequestService(
-            analysisRequestRepository = analysisRequestRepository,
-            analysisReportRepository = analysisReportRepository,
-            domainEventPublisher = domainEventPublisher,
-        )
+
+    // 검증 대상인 service만 실제 객체로 만들고 mock 협력 객체를 주입한다.
+    val service = AnalysisRequestService(analysisRequestRepository, analysisReportRepository, domainEventPublisher)
 }
 
-private fun createCommand(): AnalysisCommand.Create =
-    AnalysisCommand.Create(
-        workspaceId = UUID.randomUUID(),
-        sprintId = UUID.randomUUID(),
-        requesterId = UUID.randomUUID(),
-    )
+private fun createCommand(): AnalysisCommand.Create = AnalysisCommand.Create(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID())
 
-private fun createRequest(): AnalysisRequest =
-    AnalysisRequest.create(
-        workspaceId = UUID.randomUUID(),
-        sprintId = UUID.randomUUID(),
-        memberId = UUID.randomUUID(),
-    )
+private fun createRequest(): AnalysisRequest = AnalysisRequest.create(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID())

@@ -69,8 +69,6 @@ dependencies {
     testImplementation("io.mockk:mockk:1.13.13")
     testImplementation("org.mockito.kotlin:mockito-kotlin:5.4.0")
     testImplementation("com.ninja-squad:springmockk:4.0.2")
-    testImplementation("io.kotest:kotest-runner-junit5:6.0.7")
-    testImplementation("io.kotest:kotest-assertions-core:6.0.7")
     testImplementation("org.testcontainers:junit-jupiter")
     testImplementation("org.testcontainers:postgresql")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
