@@ -39,6 +39,13 @@
 
 코드 동작을 변경할 때 같은 변경에 회귀 테스트를 포함합니다. 테스트를 통과시키기 위해 의미 있는 검증을 삭제하거나 지나치게 넓은 mock으로 대체하지 않습니다.
 
+## Testing Conventions
+
+- 테스트를 새로 작성하거나 기존 테스트를 수정하기 전에 `docs/conventions/testing.md`를 확인하고 해당 기준을 따릅니다.
+- 테스트 계층, 기술 스택, fixture, mock, assertion, 테스트 이름과 주석 작성 기준은 해당 문서를 정본으로 사용합니다.
+- 기존 테스트의 기술 스택은 요청받은 변경과 무관하게 일괄 변환하지 않습니다.
+- 기능별 테스트 시나리오와 정책은 해당 기능 문서에서 관리하고 공통 작성 기준을 기능 문서에 중복 정의하지 않습니다.
+
 ## Database Changes
 
 - 적용된 Flyway migration을 수정하지 않고 새 migration 파일을 추가합니다.
@@ -54,9 +61,15 @@
 - 실제 AWS 또는 OpenAI 호출이 필요한 테스트는 기본 단위 테스트에서 격리합니다.
 - 환경변수를 추가하거나 이름을 바꾸면 `.env.template`, Spring configuration과 배포 script를 함께 검토합니다.
 
+## AWS Conventions
+
+- AWS 리소스 또는 배포 설정을 추가하거나 변경하기 전에 `docs/conventions/aws-naming-convention.md`를 확인합니다.
+- AWS 리소스 이름과 공통 태그 규칙은 `docs/conventions/aws-naming-convention.md`를 정본으로 사용합니다.
+- 기존 운영 리소스의 이름을 변경해야 하는 경우 문서 규칙만 적용하지 말고 배포 영향과 migration 계획을 함께 검토합니다.
+
 ## Analysis Pipeline Documentation
 
-Pizza와 Pickle에 걸친 AI 분석 파이프라인 문서는 다음 구조로 관리합니다.
+Pizza와 Pickle에 걸친 AI 분석 파이프라인의 현재 및 후속 문서는 다음 구조로 관리합니다. 아직 없는 `testing.md`와 `operations.md`는 관련 시나리오와 운영 절차를 확정하는 후속 작업에서 추가합니다.
 
 ```text
 docs/
