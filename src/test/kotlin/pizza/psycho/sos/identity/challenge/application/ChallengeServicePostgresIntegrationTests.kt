@@ -30,6 +30,7 @@ import pizza.psycho.sos.identity.challenge.infrastructure.ConfirmationTokenRepos
 import pizza.psycho.sos.identity.challenge.support.PostgresTestContainerSupport
 import java.time.Duration
 import java.time.Instant
+import java.time.temporal.ChronoUnit
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -103,7 +104,10 @@ class ChallengeServicePostgresIntegrationTests : PostgresTestContainerSupport() 
                 ChallengeStatus.PENDING,
             )
         assertEquals(newChallengeId, requireNotNull(pending).id)
-        assertEquals(pending.expiresAt, (result as RequestChallengeResult.Success).expiresAt)
+        assertEquals(
+            pending.expiresAt,
+            (result as RequestChallengeResult.Success).expiresAt.truncatedTo(ChronoUnit.MICROS),
+        )
     }
 
     @Test
