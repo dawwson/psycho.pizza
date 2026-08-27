@@ -1,6 +1,7 @@
 package pizza.psycho.sos.audit.application.service
 
 import org.springframework.stereotype.Service
+import org.springframework.transaction.annotation.Propagation
 import org.springframework.transaction.annotation.Transactional
 import pizza.psycho.sos.audit.domain.entity.AuditLog
 import pizza.psycho.sos.audit.domain.vo.AuditEventType
@@ -13,7 +14,8 @@ import java.util.UUID
 class AuditLogService(
     private val auditLogRepository: AuditLogRepository,
 ) {
-    @Transactional
+    // AFTER_COMMIT listener에서 호출되므로 감사 로그는 별도 transaction으로 저장한다.
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     fun createAuditLog(
         workspaceId: UUID,
         actorId: UUID?,
