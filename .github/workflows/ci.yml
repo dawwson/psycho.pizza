@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+permissions:
+  contents: read
+
+jobs:
+  quality-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Check Kotlin formatting
+        run: ./gradlew ktlintCheck
+
+      - name: Run unit tests
+        run: ./gradlew test
+
+      - name: Run integration tests
+        run: ./gradlew integrationTest
+
+      - name: Run PostgreSQL Testcontainers tests
+        run: ./gradlew testTc
+
+      - name: Build executable JAR
+        run: ./gradlew bootJar
+
+      - name: Upload verification reports
+        if: always()  # 항상 실행되도록 설정
+        uses: actions/upload-artifact@v4
+        with:
+          name: verification-reports
+          retention-days: 1  # 하루 동안만 보관
+          path: |
+            build/test-results/test/*.xml
+            build/test-results/integrationTest/*.xml
+            build/test-results/testTc/*.xml
+            build/reports/tests/**
+            build/reports/ktlint/**

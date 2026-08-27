@@ -102,7 +102,7 @@ docs: 릴리스 전략 문서화
 4. 해당 merge commit에 annotated tag `vMAJOR.MINOR.PATCH`를 생성해 push합니다.
 5. 같은 tag로 GitHub Release를 만들고 주요 변경, 수정 사항, 호환성 또는 migration 주의 사항을 기록합니다.
 
-`main` push는 현재 CI/CD에서 운영 배포를 시작하므로 릴리스 PR에는 배포 영향과 필요한 환경 또는 DB 변경 순서를 미리 기록합니다. tag와 GitHub Release는 어떤 commit이 배포된 릴리스인지 식별하며, 배포 자체의 성공 여부는 CI/CD 결과로 확인합니다.
+`main` push는 CI 검증을 실행하지만 운영 배포를 시작하지 않습니다. 릴리스 PR에는 배포가 필요한지와 필요한 환경 또는 DB 변경 순서를 기록하고, 실제 배포 절차와 승인은 별도로 관리합니다. tag와 GitHub Release는 릴리스 대상 commit을 식별할 뿐 배포 완료를 의미하지 않습니다.
 
 ## Hotfix
 

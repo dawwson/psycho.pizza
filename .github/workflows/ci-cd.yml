@@ -1,10 +1,13 @@
-name: CI/CD
+name: Legacy CI/CD (Disabled)
 
+# 이 workflow는 참고용으로 보존하며 push 또는 pull request로 실행하지 않는다.
+# 자동 배포를 다시 활성화하려면 별도 검토와 승인이 필요하다.
 on:
-  push:
-    branches: [ main, develop ]
-  pull_request:
-    branches: [ main, develop ]
+  workflow_dispatch:
+#  push:
+#    branches: [ main, develop ]
+#  pull_request:
+#    branches: [ main, develop ]
 
 permissions:
   contents: read
