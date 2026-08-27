@@ -16,6 +16,13 @@ Pizza–Pickle 분석 파이프라인은 Pizza가 보유한 스프린트 데이�
 | 왜 Pizza DB를 lifecycle 기준으로 사용하는가? | [ADR 0001](../adr/0001-use-pizza-db-as-analysis-lifecycle-source.md) |
 | 왜 중복 전달을 허용하고 consumer를 멱등하게 만드는가? | [ADR 0002](../adr/0002-handle-analysis-messages-idempotently.md) |
 
+향후 정책과 운영 절차가 확정되면 다음 문서를 추가합니다.
+
+| 문서 | 책임 |
+| --- | --- |
+| `testing.md` | 정책별 자동화 테스트와 통합·장애·부하 테스트 범위 |
+| `operations.md` | 장애 확인, 복구, 재처리와 관측 절차 |
+
 ## 시스템 책임
 
 | 구성요소 | 책임 |
@@ -102,8 +109,18 @@ sequenceDiagram
 - 같은 `analysisRequestId`로 제한된 재시도와 [`stale job`](lifecycle.md#stale-job) 복구를 수행합니다.
 - 성공, 최종 실패와 중복 결과를 Pizza가 안전하게 처리합니다.
 - SQS 중복 전달을 전제로 Pizza와 Pickle consumer를 멱등하게 만듭니다.
+- 부하 테스트에는 fake LLM을 사용하고 실제 OpenAI API는 소규모 품질 평가에만 사용합니다.
+- 대규모 아키텍처 개편보다 분석 파이프라인에 필요한 범위의 변경을 우선합니다.
 
 구체적인 backoff, timeout과 SQS 설정값은 담당 구현 및 테스트 PR에서 결정합니다.
+
+## 문서 동기화
+
+- 분석 상태 또는 전이 조건을 변경하면 [lifecycle](lifecycle.md)과 관련 테스트를 함께 검토합니다.
+- SQS DTO 또는 직렬화 형식을 변경하면 [메시지 계약](message-contract.md)과 Pizza·Pickle의 DTO, 소비 코드와 테스트를 함께 검토합니다.
+- 메시지 계약에는 필드 타입, 필수 여부, 의미와 대표 JSON 예제를 포함합니다.
+- 재시도, 복구, 멱등성 또는 DLQ 동작을 변경하면 [실패 처리 정책](failure-policy.md)과 관련 테스트·운영 절차를 함께 검토합니다.
+- 정상 경로뿐 아니라 중복 전달, 순서 역전, 알 수 없는 요청과 잘못된 payload를 문서와 테스트에서 다룹니다.
 
 ## 후속 작업 연결
 
