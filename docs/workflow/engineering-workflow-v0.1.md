@@ -13,9 +13,9 @@
 - 로컬 검증 task는 `ktlintCheck`, `test`, `integrationTest`, `testTc`, `bootJar`다. `testTc`에는 Docker가 필요하다.
 - PR template은 `.github/pull_request_template.md`에 있으며 Issue template은 저장소에서 확인되지 않았다.
 - Git history에는 최근 squash commit과 과거의 작은 commit, 중복 commit 및 branch merge가 함께 존재한다. 모든 과거 작업이 이 문서의 절차를 일관되게 따랐다고 보지는 않는다.
-- GitHub Actions는 `main`, `develop`의 push와 PR에서 `ktlintCheck`, 기본 `test`를 실행한다. `integrationTest`와 `testTc`는 실행하지 않는다.
-- 같은 workflow에는 `main` push 시 S3와 CodeDeploy를 사용하는 CD가 선언돼 있다. 기존 저장소에서 가져온 설정으로 Pizza에 적합한지와 실제 가용 여부는 **확인 필요**다. CD 자동화는 현재 workflow 범위로 채택하지 않는다.
-- branch protection, required checks, 실제 CI/CD 성공 이력, Issue label·project 운영과 release 승인 기록 위치는 **확인 필요**다.
+- GitHub Actions CI는 `main`, `develop`의 push와 PR에서 `ktlintCheck`, `test`, `integrationTest`, `testTc`, `bootJar`를 실행하도록 선언돼 있다. GitHub-hosted runner에서의 실제 성공 이력과 실행 시간은 **확인 필요**다.
+- S3와 CodeDeploy를 사용하는 기존 CI/CD workflow는 참고용으로 보존하되 push와 PR trigger를 제거했다. CD 자동화는 현재 workflow 범위로 채택하지 않는다.
+- branch protection, required checks, 실제 CI 성공 이력, Issue label·project 운영과 release 승인 기록 위치는 **확인 필요**다.
 
 ## 2. Principles
 
@@ -268,7 +268,7 @@ base branch 대비 전체 diff, commit 목록, Issue, 로컬 검증 결과와 �
 2. 차단 Finding은 구현 단계로 되돌리고, 비차단 사항은 후속 Finding으로 분리한다.
 3. AI는 `.github/pull_request_template.md`의 `Summary`, `Why`, `Changes`, `How to Test`, `Notes`에 맞춰 PR 본문 초안을 작성한다.
 4. 사람은 제목, 본문, base/head branch와 공개 가능한 내용을 승인하고 GitHub에서 PR을 직접 생성한다.
-5. 최신 commit의 CI를 확인한다. 현재 CI는 `ktlintCheck`와 기본 `test`만 실행하며 `integrationTest`, `testTc`, PR의 `bootJar`는 자동 실행하지 않는다.
+5. 최신 commit에서 `ktlintCheck`, `test`, `integrationTest`, `testTc`, `bootJar`를 실행하는 CI를 확인한다.
 6. CI 실패 시 원인을 분석하고 변경은 다시 계획·구현·사람 검토·사람 commit 절차를 거친다. 취소나 미실행을 성공으로 간주하지 않는다.
 7. 사람은 review, CI, 로컬 검증과 운영 영향을 종합해 merge 또는 보류를 결정한다.
 
@@ -281,7 +281,7 @@ base branch 대비 전체 diff, commit 목록, Issue, 로컬 검증 결과와 �
 
 작업 branch의 commit은 검토 단위다. `feature/*`, `fix/*`, `docs/* → develop` 병합 시 PR 전체를 하나로 squash하고 squash commit 제목과 본문에는 PR 목적과 주요 변경을 설명한다.
 
-현재 Actions는 `main` push에서 CD를 실행하도록 선언돼 있다. 설정이 비활성화됐다고 확인되기 전에는 `main` merge의 배포 가능성을 별도로 확인한다.
+기존 CD workflow는 수동 실행만 허용하며 배포 job은 `main` push 조건을 요구하므로 자동 또는 수동 실행에서 배포되지 않는다. CD 재활성화는 별도 계획과 승인을 거친다.
 
 #### Review Criteria
 
@@ -375,7 +375,7 @@ AI가 작업을 수행할 수 있다는 것은 독립적인 범위 확대 권한
 | Merge Gate | review, CI, 로컬 검증과 운영 영향 확인 완료 | 사람 |
 | Release Gate | release 필요성, 버전, tag 대상과 notes 승인 | 사람 |
 
-CI는 로컬 Quality Gate의 대체물이 아니다. 현재 Actions가 실행하지 않는 `integrationTest`, `testTc`, 범위별 `bootJar`는 해당 변경에서 별도로 확인한다.
+CI는 로컬 Quality Gate의 대체물이 아니다. 변경 범위에 필요한 검증은 로컬에서도 실행하고, 실행하지 못한 검증은 사유와 함께 기록한다.
 
 ## 7. Exception / Scope Control
 
@@ -389,12 +389,10 @@ CI는 로컬 Quality Gate의 대체물이 아니다. 현재 Actions가 실행하
 
 다음은 현재 workflow가 아니라 후속 검토 후보이다.
 
-1. **Pizza 전용 CI 재설정**: 기존 저장소에서 가져온 workflow를 Pizza의 branch, 권한과 실행 환경에 맞게 검증하고 CI와 CD를 분리한다. 현재 목표는 Build, Test, Lint/Static Analysis 자동화까지이며 CD는 비용 및 인프라 제약으로 제외한다.
-2. **CI 검증 범위 정합화**: `bootJar`, `integrationTest`, `testTc` 중 어떤 task를 PR에서 자동화할지 실행 시간과 비용을 함께 검토한다.
-3. **PR template 보완**: lint, 범위별 테스트, 미실행 사유, risk와 migration 항목 반영을 검토한다.
-4. **Issue template 검토**: Finding과 Issue를 구분하면서 문제, 근거, scope와 Acceptance Criteria를 기록할 가벼운 template이 필요한지 실제 사용 후 판단한다.
-5. **GitHub 보호 설정 확인**: `main`/`develop` branch protection, required checks와 허용 merge 방식을 Git 운영 가이드와 맞춘다.
-6. **Release 및 rollback 운영 정리**: 승인 기록, artifact 식별, 운영 확인과 rollback 절차는 인프라 책임과 비용이 정해진 뒤 확정한다.
+1. **CI 실행 비용 확인**: GitHub-hosted runner에서 `testTc`를 포함한 전체 Quality Gate의 성공 여부와 실행 시간을 측정하고 무료 Actions 범위에서 유지 가능한지 판단한다.
+2. **Issue template 검토**: Finding과 Issue를 구분하면서 문제, 근거, scope와 Acceptance Criteria를 기록할 가벼운 template이 필요한지 실제 사용 후 판단한다.
+3. **GitHub 보호 설정 확인**: `main`/`develop` branch protection, required checks와 허용 merge 방식을 Git 운영 가이드와 맞춘다.
+4. **Release 및 rollback 운영 정리**: 승인 기록, artifact 식별, 운영 확인과 rollback 절차는 인프라 책임과 비용이 정해진 뒤 확정한다.
 
 ## 9. Workflow Changelog
 
