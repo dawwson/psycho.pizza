@@ -33,6 +33,10 @@ openai:
   api-key: TEST-dummy-api-key
   model: gpt-4.1-miniguswo 
 
+analysis:
+  dispatcher:
+    enabled: false
+
 sqs:
   request-queue-name: test-queue-1
   response-queue-url: test-queue-2

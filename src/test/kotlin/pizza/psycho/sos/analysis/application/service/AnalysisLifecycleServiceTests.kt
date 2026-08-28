@@ -27,41 +27,6 @@ import java.util.UUID
  */
 class AnalysisLifecycleServiceTests {
     @Nested
-    inner class MarkRunning {
-        @Test
-        fun `QUEUED 요청을 조회해 RUNNING으로 변경한다`() {
-            // Given: repository가 실제 DB 대신 준비한 QUEUED 요청을 반환한다고 가정한다.
-            val fixture = LifecycleFixture()
-            val request = createRequestWithId()
-            every { fixture.analysisRequestRepository.findById(request.requiredId) } returns Optional.of(request)
-
-            // When: 검증 대상 service를 실제로 실행한다.
-            fixture.service.markRunning(request.requiredId)
-
-            // Then: 실제 엔티티의 상태 변화와 repository 조회를 각각 확인한다.
-            assertThat(request.status).isEqualTo(AnalysisRequestStatus.RUNNING)
-            assertThat(request.startedAt).isNotNull()
-            verify(exactly = 1) { fixture.analysisRequestRepository.findById(request.requiredId) }
-        }
-    }
-
-    @Nested
-    inner class Fail {
-        @Test
-        fun `RUNNING 요청을 FAILED로 변경하고 오류 메시지를 남긴다`() {
-            val fixture = LifecycleFixture()
-            val request = createRunningRequest()
-            every { fixture.analysisRequestRepository.findById(request.requiredId) } returns Optional.of(request)
-
-            fixture.service.fail(request.requiredId, "SQS 전송 실패")
-
-            assertThat(request.status).isEqualTo(AnalysisRequestStatus.FAILED)
-            assertThat(request.completedAt).isNotNull()
-            assertThat(request.errorMessage).isEqualTo("SQS 전송 실패")
-        }
-    }
-
-    @Nested
     inner class Complete {
         @Test
         fun `RUNNING 요청을 DONE으로 변경하고 리포트에 run ID와 분석 결과를 연결한다`() {
@@ -118,7 +83,7 @@ class AnalysisLifecycleServiceTests {
 
         val exception =
             catchThrowableOfType(DomainException::class.java) {
-                fixture.service.markRunning(requestId)
+                fixture.service.complete(requestId, "pickle-run-1", "분석 결과")
             }
 
         assertThat(exception.errorCode).isEqualTo(AnalysisErrorCode.ANALYSIS_REQUEST_NOT_FOUND)

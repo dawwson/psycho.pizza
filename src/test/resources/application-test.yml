@@ -37,6 +37,10 @@ openai:
   api-key: test-dummy-api-key
   model: gpt-test-model
 
+analysis:
+  dispatcher:
+    enabled: false
+
 sqs:
   request-queue-name: ${REQUEST_QUEUE_NAME:psycho-sqs-request-prod}
   response-queue-url: test-response-queue-url

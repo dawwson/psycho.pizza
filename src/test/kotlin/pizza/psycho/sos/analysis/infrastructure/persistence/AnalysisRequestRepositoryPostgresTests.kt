@@ -60,20 +60,21 @@ class AnalysisRequestRepositoryPostgresTests : PostgresTestContainerSupport() {
     @Test
     fun `두 transaction이 동시에 선점하면 같은 요청을 반환하지 않는다`() {
         /*
-        TX1: 첫 번째 QUEUED row를 선점하고 lock 획득
-                ↓
-            commit 하지 않고 lock 유지
-                ↓
-        TX2: 선점 시도
-                ↓
-            TX1이 잡은 row는 SKIP LOCKED
-                ↓
-            다른 row 선점
-                ↓
-        TX1: 이제 commit
+         * TX1: 첫 번째 QUEUED row를 선점하고 lock 획득
+         *         ↓
+         *     commit 하지 않고 lock 유지
+         *         ↓
+         * TX2: 선점 시도
+         *         ↓
+         *     TX1이 잡은 row는 SKIP LOCKED
+         *         ↓
+         *     다른 row 선점
+         *         ↓
+         * TX1: 이제 commit
+         *
+         * 두 트랜잭션이 겹쳐서 실행되는 상황을 의도적으로 재현하기 위해 latch 두 개를 쓴다.
+         */
 
-        => 두 트랜잭션이 겹쳐서 실행되는 상황을 의도적으로 재현하기 위해 latch 두 개를 쓴다.
-        */
         // 분석 요청 2개 생성
         analysisRequestRepository.saveAllAndFlush(List(2) { newAnalysisRequest() })
         // TX1과 TX2를 동시에 실행할 수 있도록 크기 2의 스레드 풀을 생성한다.
