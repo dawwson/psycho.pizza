@@ -15,19 +15,17 @@ sequenceDiagram
     participant Client
     participant PizzaAPI
     participant PizzaDB
-    participant MemoryQueue
-    participant Worker
+    participant Dispatcher
     participant RequestQueue
     participant Pickle
     participant ResponseQueue
 
     Client->>PizzaAPI: 분석 요청 생성
     PizzaAPI->>PizzaDB: AnalysisRequest(QUEUED), AnalysisReport 저장
-    PizzaAPI-->>MemoryQueue: transaction commit 후 jobId enqueue
-    Worker->>MemoryQueue: jobId take
-    Worker->>PizzaDB: QUEUED to RUNNING
-    Worker->>Worker: 분석 입력 계산
-    Worker->>RequestQueue: 요청 메시지 전송
+    Dispatcher->>PizzaDB: QUEUED batch 선점
+    Dispatcher->>Dispatcher: 분석 입력 계산
+    Dispatcher->>RequestQueue: 요청 메시지 전송
+    Dispatcher->>PizzaDB: 전송 성공 후 RUNNING
     RequestQueue-->>Pickle: 요청 전달
     Pickle-->>ResponseQueue: 성공 결과 통지
     ResponseQueue-->>PizzaDB: RUNNING to DONE, report 갱신
@@ -38,10 +36,11 @@ sequenceDiagram
 | 상황 | 현재 동작 |
 | --- | --- |
 | 요청 생성 | 요청과 초기 리포트를 저장하고 `QUEUED` 반환 |
-| Pizza worker가 작업 시작 | SQS 전송 전에 `RUNNING`으로 변경 |
-| 입력 계산 또는 SQS 전송 실패 | `RUNNING`을 `FAILED`로 변경하고 예외 기록 |
+| Pizza Dispatcher가 polling | PostgreSQL row lock으로 제한된 `QUEUED` batch 선점 |
+| SQS 전송 성공 | `RUNNING`으로 변경하고 `started_at` 기록 |
+| 입력 계산 또는 SQS 전송 실패 | `QUEUED`를 유지해 다음 polling에서 다시 발견 |
 | 성공 결과 수신 | `RUNNING`을 `DONE`으로 변경하고 리포트에 결과 저장 |
-| 애플리케이션 재시작 | 모든 `RUNNING`을 `QUEUED`로 되돌린 뒤 모든 `QUEUED`를 인메모리 큐에 추가 |
+| 애플리케이션 재시작 | 별도 상태 초기화 없이 DB의 기존 `QUEUED`를 다시 발견 |
 
 현재 성공 결과 소비자는 성공 payload만 처리합니다. Pickle의 최종 실패 통지, 중복 성공 결과와 종료 상태에 늦게 도착한 메시지를 안전하게 수렴시키는 동작은 아직 구현되어 있지 않습니다.
 
@@ -97,7 +96,7 @@ stateDiagram-v2
 
 최종 실패 이후 사용자가 다시 분석을 요청하면 기존 요청을 되살리지 않고 새로운 `analysisRequestId`를 생성합니다.
 
-## 상태별 책임
+## 목표 상태별 책임
 
 ### Pizza API
 
@@ -105,10 +104,10 @@ stateDiagram-v2
 - 외부 응답에는 기존 상태 이름과 필드를 유지합니다.
 - 요청 생성 성공은 Pickle 전달 성공을 의미하지 않습니다.
 
-### Pizza worker와 DB 기반 dispatch
+### Pizza DB Dispatcher
 
-- Pizza worker는 유지하며 인메모리 큐 대신 DB에서 처리 가능한 `QUEUED` 요청을 조회합니다.
-- worker는 분석 입력을 계산한 뒤 그 결과로 request 메시지를 구성합니다.
+- Dispatcher는 DB에서 처리 가능한 `QUEUED` 요청을 제한된 batch로 선점합니다.
+- Dispatcher는 분석 입력을 계산한 뒤 그 결과로 request 메시지를 구성합니다.
 - 전송 시도와 다음 재시도 가능 시각을 영속화합니다.
 - SQS 전송 성공 후 `RUNNING`으로 전환합니다.
 - 영구 오류 또는 최대 시도 초과를 `FAILED`로 확정합니다.
@@ -143,12 +142,12 @@ stateDiagram-v2
 
 | 항목 | 현재 | 목표 |
 | --- | --- | --- |
-| Pizza worker 작업 조회 | `InMemoryAnalysisJobQueue`에서 작업 ID 대기 | worker가 DB에서 처리 가능한 요청 조회 |
-| 분석 입력 계산 | Pizza worker가 수행 | Pizza worker가 계속 수행 |
-| `RUNNING` 진입 | Pizza worker 처리 시작 전 | SQS 전송 성공 후 |
+| Pizza 작업 조회 | Dispatcher가 PostgreSQL row lock으로 `QUEUED` batch 선점 | 현재 구현 유지, retry 가능 시각 조건 추가 |
+| 분석 입력 계산 | Pizza Dispatcher가 수행 | 현재 구현 유지 |
+| `RUNNING` 진입 | SQS 전송 성공 후 | 현재 구현 유지 |
 | 재시도 정보 | 영속 정보 없음 | 시도 횟수와 시각을 DB에 저장 |
-| 재시작 복구 | 모든 `RUNNING`을 즉시 `QUEUED`로 변경 | 시간과 시도 한도로 정체 요청만 판정 |
-| 최종 전송 실패 | worker 예외를 즉시 `FAILED`로 처리 | 오류를 분류하고 제한 재시도 후 `FAILED` |
+| 재시작 복구 | `QUEUED`는 다시 발견하지만 `RUNNING` 복구 없음 | 시간과 시도 한도로 정체 요청만 판정 |
+| 전송 실패 | retry 정보 없이 `QUEUED` 유지 | 오류를 분류하고 제한 재시도 후 `FAILED` |
 | Pickle 최종 실패 | 소비 계약 없음 | 실패 결과를 받아 `FAILED` 반영 |
 | 중복 결과 | 상태 전이 예외 발생 가능 | 동일 결과를 멱등하게 수용 |
 

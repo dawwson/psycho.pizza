@@ -44,8 +44,7 @@ sequenceDiagram
     participant boxClient as Box
     participant PizzaAPI
     participant PizzaDB
-    participant MemoryQueue
-    participant PizzaWorker
+    participant Dispatcher
     participant RequestQueue
     participant Pickle
     participant PickleDB
@@ -53,11 +52,10 @@ sequenceDiagram
 
     boxClient->>PizzaAPI: 분석 요청
     PizzaAPI->>PizzaDB: QUEUED 요청과 초기 리포트 저장
-    PizzaAPI-->>MemoryQueue: commit 후 jobId enqueue
-    PizzaWorker->>MemoryQueue: jobId take
-    PizzaWorker->>PizzaDB: QUEUED to RUNNING
-    PizzaWorker->>PizzaWorker: 분석 입력 계산
-    PizzaWorker->>RequestQueue: request 메시지 발행
+    Dispatcher->>PizzaDB: QUEUED batch 선점
+    Dispatcher->>Dispatcher: 분석 입력 계산
+    Dispatcher->>RequestQueue: request 메시지 발행
+    Dispatcher->>PizzaDB: 전송 성공 후 RUNNING
     RequestQueue-->>Pickle: 요청 전달
     Pickle->>PickleDB: Job과 결과 저장
     Pickle->>ResponseQueue: 성공 결과 통지
@@ -65,11 +63,13 @@ sequenceDiagram
     PizzaAPI->>PizzaDB: RUNNING to DONE, 리포트 갱신
 ```
 
-현재 구현에는 다음 제약이 있습니다.
+현재 구현의 기준과 제약은 다음과 같습니다.
 
-- Pizza의 내부 대기열이 프로세스 메모리에 있어 DB 상태와 별도로 관리됩니다.
-- Pizza는 SQS 전송 전에 요청을 `RUNNING`으로 변경합니다.
-- Pizza 재시작 시 모든 `RUNNING` 요청을 `QUEUED`로 되돌립니다.
+- Pizza DB의 `QUEUED` 요청이 실행 대기열의 기준입니다.
+- Dispatcher는 제한된 batch를 PostgreSQL `FOR UPDATE SKIP LOCKED`로 선점합니다.
+- Pizza는 SQS 전송에 성공한 요청만 `RUNNING`으로 변경합니다.
+- 입력 생성 또는 SQS 전송에 실패한 요청은 retry 정보 없이 `QUEUED`에 남아 다음 polling에서 다시 발견됩니다.
+- 애플리케이션 시작만을 이유로 `RUNNING` 요청을 `QUEUED`로 되돌리지 않으며 stale 복구는 아직 구현되지 않았습니다.
 - Pizza의 result consumer는 성공 결과를 전제로 하며 최종 실패 payload를 안전하게 처리하지 못합니다.
 - 동일 결과가 반복 전달되면 종료 상태 전이에서 예외가 발생할 수 있습니다.
 
@@ -80,7 +80,7 @@ sequenceDiagram
     participant boxClient as Box
     participant PizzaAPI
     participant PizzaDB
-    participant PizzaWorker
+    participant Dispatcher
     participant RequestQueue
     participant Pickle
     participant PickleDB
@@ -89,10 +89,10 @@ sequenceDiagram
 
     boxClient->>PizzaAPI: 분석 요청
     PizzaAPI->>PizzaDB: QUEUED 요청과 초기 리포트 저장
-    PizzaWorker->>PizzaDB: 처리 가능한 QUEUED 요청 조회
-    PizzaWorker->>PizzaWorker: 분석 입력 계산
-    PizzaWorker->>RequestQueue: 계산된 입력으로 request 메시지 발행
-    PizzaWorker->>PizzaDB: 전송 성공 후 RUNNING
+    Dispatcher->>PizzaDB: 처리 가능한 QUEUED 요청 조회
+    Dispatcher->>Dispatcher: 분석 입력 계산
+    Dispatcher->>RequestQueue: 계산된 입력으로 request 메시지 발행
+    Dispatcher->>PizzaDB: 전송 성공 후 RUNNING
     RequestQueue-->>Pickle: 요청 전달
     Pickle->>PickleDB: Job, 시도와 결과 저장
     Pickle->>ResponseQueue: 성공 또는 최종 실패 통지
@@ -103,8 +103,7 @@ sequenceDiagram
 목표 흐름의 기준은 다음과 같습니다.
 
 - Pizza DB를 분석 요청 lifecycle의 기준으로 사용합니다.
-- Pizza worker는 유지하되 작업 조회 기준을 인메모리 큐에서 Pizza DB로 변경합니다.
-- Pizza worker는 현재와 같이 분석 입력을 계산한 뒤 request 메시지를 발행합니다.
+- Pizza Dispatcher는 DB에서 처리 가능한 요청을 선점하고 분석 입력을 계산한 뒤 request 메시지를 발행합니다.
 - SQS 전송 성공 후 `RUNNING`으로 변경합니다.
 - 같은 `analysisRequestId`로 제한된 재시도와 [`stale job`](lifecycle.md#stale-job) 복구를 수행합니다.
 - 성공, 최종 실패와 중복 결과를 Pizza가 안전하게 처리합니다.
@@ -124,12 +123,12 @@ sequenceDiagram
 
 ## 후속 작업 연결
 
-| 범위 | 담당 PR |
+| 범위 | 담당 작업 |
 | --- | --- |
 | Pizza 현재 lifecycle을 테스트로 고정 | PR 2 |
 | Pickle 중복·통지·복구 동작을 테스트로 고정 | PR 3 |
-| Pizza DB Dispatcher와 재시도 정보 추가 | PR 4 |
-| Pizza 재시도와 `stale job` 복구 구현 | PR 5 |
+| Pizza DB Dispatcher 구현 | 이슈 #20 — 구현 완료 |
+| Pizza 발행 재시도 정보와 `stale job` 복구 구현 | 이슈 #21 |
 | Pizza 결과 실패 계약과 멱등 처리 구현 | PR 6 |
 | Pickle 제출·통지·복구 책임 분리 | PR 7 |
 | Pickle LLM 오류 분류와 제한 재시도 구현 | PR 8 |
