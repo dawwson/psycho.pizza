@@ -14,6 +14,22 @@ import java.util.UUID
 interface AnalysisRequestRepository : JpaRepository<AnalysisRequest, UUID> {
     fun findAllByStatus(status: AnalysisRequestStatus): List<AnalysisRequest>
 
+    @Query(
+        value =
+            """
+            select *
+            from analysis_request
+            where status = 'QUEUED'
+            order by created_at, id
+            limit :batchSize
+            for update skip locked
+            """,
+        nativeQuery = true,
+    )
+    fun claimQueued(
+        @Param("batchSize") batchSize: Int,
+    ): List<AnalysisRequest>
+
     fun findByIdAndWorkspaceId(
         id: UUID,
         workspaceId: UUID,

@@ -1,7 +1,6 @@
 package pizza.psycho.sos.analysis.application.service
 
 import io.mockk.every
-import io.mockk.justRun
 import io.mockk.mockk
 import io.mockk.slot
 import io.mockk.verify
@@ -13,28 +12,26 @@ import org.junit.jupiter.api.Test
 import pizza.psycho.sos.analysis.application.service.dto.AnalysisCommand
 import pizza.psycho.sos.analysis.domain.entity.AnalysisReport
 import pizza.psycho.sos.analysis.domain.entity.AnalysisRequest
-import pizza.psycho.sos.analysis.domain.event.AnalysisRequestCreatedEvent
 import pizza.psycho.sos.analysis.domain.exception.AnalysisErrorCode
 import pizza.psycho.sos.analysis.domain.vo.AnalysisRequestStatus
 import pizza.psycho.sos.analysis.domain.vo.AnalysisTargetType
 import pizza.psycho.sos.analysis.infrastructure.persistence.AnalysisReportRepository
 import pizza.psycho.sos.analysis.infrastructure.persistence.AnalysisRequestRepository
-import pizza.psycho.sos.common.event.DomainEventPublisher
 import pizza.psycho.sos.common.handler.DomainException
 import java.time.Instant
 import java.util.Optional
 import java.util.UUID
 
 /**
- * [AnalysisRequestService]가 분석 요청을 생성할 때 만드는 DB 데이터와 도메인 이벤트를 고정한다.
- * repository와 event publisher만 mock으로 두고 저장 대상은 실제 엔티티를 사용한다.
+ * [AnalysisRequestService]가 분석 요청을 생성할 때 만드는 DB 데이터를 고정한다.
+ * repository만 mock으로 두고 저장 대상은 실제 엔티티를 사용한다.
  */
 class AnalysisRequestServiceTests {
     @Nested
     inner class CreateSprintAnalysisRequest {
         @Test
-        fun `QUEUED 요청과 초기 리포트를 저장하고 생성 이벤트를 발행한다`() {
-            // Given: fixture는 service만 실제 객체로 만들고 repository와 publisher는 mock으로 격리한다.
+        fun `QUEUED 요청과 초기 리포트를 저장한다`() {
+            // Given: fixture는 service만 실제 객체로 만들고 repository는 mock으로 격리한다.
             val fixture = ServiceFixture()
             val command = createCommand()
             val generatedRequestId = UUID.randomUUID()
@@ -42,7 +39,6 @@ class AnalysisRequestServiceTests {
             // slot은 mock 메서드에 실제로 전달된 인자를 나중에 꺼내 검증하기 위한 상자다.
             val requestSlot = slot<AnalysisRequest>()
             val reportSlot = slot<AnalysisReport>()
-            val eventSlot = slot<AnalysisRequestCreatedEvent>()
 
             // every { 호출 } returns 값: mock 호출의 고정 반환값을 정한다.
             // answers는 전달된 인자를 읽거나 변경해야 할 때 사용한다. 여기서는 JPA의 ID/시각 생성을 재현한다.
@@ -54,8 +50,6 @@ class AnalysisRequestServiceTests {
                 }
             }
             every { fixture.analysisReportRepository.save(capture(reportSlot)) } answers { firstArg() }
-            // 반환값이 없는 Unit 메서드는 justRun으로 "정상 호출된다"고 준비한다.
-            justRun { fixture.domainEventPublisher.publish(capture(eventSlot)) }
 
             // When: 테스트 대상 service를 실제로 실행하는 지점이다.
             val result = fixture.service.createSprintAnalysisRequest(command)
@@ -84,19 +78,16 @@ class AnalysisRequestServiceTests {
             assertThat(result.id).isEqualTo(generatedRequestId)
             assertThat(result.status).isEqualTo(AnalysisRequestStatus.QUEUED.name)
             assertThat(result.createdAt).isEqualTo(generatedAt)
-            assertThat(eventSlot.captured.analysisRequestId).isEqualTo(generatedRequestId)
 
-            // Then 2: verifySequence는 아래 호출들이 정확한 순서로 일어났는지 검증한다.
-            // 상태 검증만으로는 "이벤트가 저장보다 먼저 발행되는" orchestration 오류를 잡을 수 없다.
+            // Then 2: 요청을 저장해 생성된 ID를 초기 리포트에 연결해야 한다.
             verifySequence {
                 fixture.analysisRequestRepository.save(savedRequest)
                 fixture.analysisReportRepository.save(savedReport)
-                fixture.domainEventPublisher.publish(eventSlot.captured)
             }
         }
 
         @Test
-        fun `저장된 요청에 ID가 없으면 리포트와 생성 이벤트를 만들지 않는다`() {
+        fun `저장된 요청에 ID가 없으면 리포트를 만들지 않는다`() {
             val fixture = ServiceFixture()
             // any<T>()는 인자 값과 무관하게 이 stub을 적용한다는 뜻이다.
             every { fixture.analysisRequestRepository.save(any<AnalysisRequest>()) } answers {
@@ -111,11 +102,10 @@ class AnalysisRequestServiceTests {
             assertThat(exception.errorCode).isEqualTo(AnalysisErrorCode.ANALYSIS_REQUEST_ID_NOT_GENERATED)
             // exactly = 0은 예외 이후 후속 부작용이 발생하지 않았음을 검증한다.
             verify(exactly = 0) { fixture.analysisReportRepository.save(any<AnalysisReport>()) }
-            verify(exactly = 0) { fixture.domainEventPublisher.publish(any<AnalysisRequestCreatedEvent>()) }
         }
 
         @Test
-        fun `저장된 요청에 생성 시각이 없으면 리포트와 생성 이벤트를 만들지 않는다`() {
+        fun `저장된 요청에 생성 시각이 없으면 리포트를 만들지 않는다`() {
             val fixture = ServiceFixture()
             every { fixture.analysisRequestRepository.save(any<AnalysisRequest>()) } answers {
                 firstArg<AnalysisRequest>().apply { id = UUID.randomUUID() }
@@ -128,7 +118,6 @@ class AnalysisRequestServiceTests {
 
             assertThat(exception.errorCode).isEqualTo(AnalysisErrorCode.ANALYSIS_REQUEST_CREATED_AT_NOT_GENERATED)
             verify(exactly = 0) { fixture.analysisReportRepository.save(any<AnalysisReport>()) }
-            verify(exactly = 0) { fixture.domainEventPublisher.publish(any<AnalysisRequestCreatedEvent>()) }
         }
     }
 
@@ -165,13 +154,12 @@ class AnalysisRequestServiceTests {
 }
 
 private class ServiceFixture {
-    // mockk<T>()로 만든 객체는 실제 repository/publisher 코드를 실행하지 않는다.
+    // mockk<T>()로 만든 객체는 실제 repository 코드를 실행하지 않는다.
     val analysisRequestRepository = mockk<AnalysisRequestRepository>()
     val analysisReportRepository = mockk<AnalysisReportRepository>()
-    val domainEventPublisher = mockk<DomainEventPublisher>()
 
     // 검증 대상인 service만 실제 객체로 만들고 mock 협력 객체를 주입한다.
-    val service = AnalysisRequestService(analysisRequestRepository, analysisReportRepository, domainEventPublisher)
+    val service = AnalysisRequestService(analysisRequestRepository, analysisReportRepository)
 }
 
 private fun createCommand(): AnalysisCommand.Create = AnalysisCommand.Create(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID())
