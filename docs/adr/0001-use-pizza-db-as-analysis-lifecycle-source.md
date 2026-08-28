@@ -22,7 +22,7 @@ Pizza는 분석 요청과 초기 리포트를 DB에 저장한 뒤, 트랜잭션 
 Pizza의 `analysis_request` 행을 Pizza가 소유하는 분석 lifecycle의 source of truth로 사용합니다.
 
 - 분석 요청 생성과 초기 리포트 저장은 기존처럼 하나의 DB 트랜잭션에서 수행합니다.
-- 인메모리 큐와 내부 worker를 제거하고, DB에서 전송 가능한 `QUEUED` 요청을 조회하는 Dispatcher로 교체합니다.
+- 인메모리 큐를 제거하고, 기존 worker의 분석 입력 계산과 메시지 발행 책임은 유지하되 작업 조회 기준을 DB에서 전송 가능한 `QUEUED` 요청을 선점하는 Dispatcher로 교체합니다.
 - Dispatcher의 재시도 횟수, 마지막 시도 시각과 다음 시도 가능 시각을 DB에 저장합니다.
 - SQS request queue 전송에 성공한 요청은 `RUNNING`으로 전환합니다.
 - `RUNNING`은 Pizza 내부 worker가 실행 중이라는 뜻이 아니라 Pickle에 전달되어 최종 결과를 기다리는 상태를 뜻합니다.
