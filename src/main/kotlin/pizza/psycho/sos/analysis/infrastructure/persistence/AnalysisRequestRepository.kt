@@ -7,11 +7,17 @@ import org.springframework.stereotype.Repository
 import pizza.psycho.sos.analysis.domain.entity.AnalysisRequest
 import pizza.psycho.sos.analysis.domain.vo.AnalysisRequestStatus
 import java.time.Instant
+import java.util.Optional
 import java.util.UUID
 
 @Repository
 interface AnalysisRequestRepository : JpaRepository<AnalysisRequest, UUID> {
     fun findAllByStatus(status: AnalysisRequestStatus): List<AnalysisRequest>
+
+    fun findByIdAndWorkspaceId(
+        id: UUID,
+        workspaceId: UUID,
+    ): Optional<AnalysisRequest>
 
     /*
      * analysis_request 테이블에서

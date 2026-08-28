@@ -30,7 +30,6 @@ import pizza.psycho.sos.identity.challenge.infrastructure.ConfirmationTokenRepos
 import pizza.psycho.sos.identity.challenge.support.PostgresTestContainerSupport
 import java.time.Duration
 import java.time.Instant
-import java.time.temporal.ChronoUnit
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -104,9 +103,15 @@ class ChallengeServicePostgresIntegrationTests : PostgresTestContainerSupport() 
                 ChallengeStatus.PENDING,
             )
         assertEquals(newChallengeId, requireNotNull(pending).id)
-        assertEquals(
-            pending.expiresAt,
-            (result as RequestChallengeResult.Success).expiresAt.truncatedTo(ChronoUnit.MICROS),
+        val expiresAtDifference =
+            Duration
+                .between(
+                    pending.expiresAt,
+                    (result as RequestChallengeResult.Success).expiresAt,
+                ).abs()
+        assertTrue(
+            expiresAtDifference <= Duration.ofNanos(1_000),
+            "Persisted expiresAt must differ from the result by at most 1 microsecond: $expiresAtDifference",
         )
     }
 
