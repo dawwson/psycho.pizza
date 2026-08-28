@@ -92,6 +92,7 @@ class AnalysisController(
         return responseOf(
             data =
                 analysisRequestQueryService.getAnalysisRequestReport(
+                    workspaceId = workspaceId,
                     analysisRequestId = analysisRequestId,
                 ),
             status = HttpStatus.OK,
