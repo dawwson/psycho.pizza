@@ -23,3 +23,7 @@
 ## Git Authority
 
 Git staging, commit, push, PR 생성, merge, tag와 release는 사람이 수행한다.
+
+## Documentation
+
+문서를 작성하거나 수정할 때 docs/README.md의 작성 원칙을 따른다.
