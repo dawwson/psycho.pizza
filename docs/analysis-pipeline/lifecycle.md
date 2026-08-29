@@ -130,11 +130,14 @@ stateDiagram-v2
 
 - `QUEUED`: `next_retry_at`이 현재 시각 이전인 요청만 Dispatcher 대상이 됩니다.
 - `RUNNING`: 정상 처리 제한 시간을 넘긴 요청만 복구 후보가 됩니다.
-- 복구 한도가 남은 `RUNNING`은 `QUEUED`로 전환해 같은 요청 ID로 재전송합니다.
-- 복구 한도를 초과한 요청은 `FAILED`로 종료합니다.
+- recovery scheduler는 정체된 `RUNNING`을 제한된 batch와 `FOR UPDATE SKIP LOCKED`로 선점합니다.
+- 복구 한도가 남은 `RUNNING`은 같은 요청 ID를 유지한 채 `QUEUED`로 전환하고 `next_retry_at`을 갱신합니다.
+- recovery scheduler는 직접 메시지를 발행하지 않으며, 재발행은 기존 Dispatcher가 담당합니다.
+- 최초 발행, 발행 실패 후 재시도와 stale 복구 후 재발행은 하나의 `attempt_count`를 공유하며 별도의 recovery 횟수는 관리하지 않습니다.
+- 최대 시도 횟수를 사용한 `RUNNING`이 stale 상태가 되면 추가 발행 없이 `FAILED`로 종료합니다.
 - 애플리케이션 시작만을 이유로 모든 `RUNNING`을 즉시 `QUEUED`로 바꾸지 않습니다.
 
-구체적인 제한 횟수, backoff, 오류 분류와 메시지 충돌 처리 방식은 실패 처리 정책에서 정의합니다.
+구체적인 제한 횟수, backoff와 오류 분류는 실패 처리 정책에서 정의합니다. `RUNNING` 제한 시간, recovery 실행 주기와 batch 크기는 Pickle 정상 처리 시간과 SQS `visibility timeout`을 확인한 뒤 이슈 #21의 설정값과 테스트로 확정합니다.
 
 ## 구현 차이
 

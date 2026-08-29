@@ -4,7 +4,7 @@
 
 이 문서는 Pizza–Pickle 분석 파이프라인에서 오류를 분류하고 재시도, [`stale job`](#stale-job) 복구, 중복 메시지와 최종 실패를 처리하는 기준을 정의합니다.
 
-PR 1에서는 후속 구현이 따라야 할 정책만 확정합니다. backoff 계산식, timeout, Pickle 결과 통지 횟수와 SQS `maxReceiveCount` 같은 세부 값은 해당 구현과 테스트 PR에서 결정합니다.
+PR 1에서는 후속 구현이 따라야 할 정책만 확정했습니다. Pizza request queue 발행의 시도 횟수와 backoff 기본값은 이슈 #21에서 정하고, timeout, Pickle 결과 통지 횟수와 SQS `maxReceiveCount` 같은 나머지 세부 값은 해당 구현과 테스트 PR에서 결정합니다.
 
 중복 전달을 정상 상황으로 다루는 결정은 [ADR 0002](../adr/0002-handle-analysis-messages-idempotently.md), 메시지 필드와 성공·실패 조합은 [Pizza–Pickle 메시지 계약](message-contract.md)에 기록합니다.
 
@@ -15,7 +15,7 @@ PR 1에서는 후속 구현이 따라야 할 정책만 확정합니다. backoff 
 - Pizza request queue 발행과 Pickle LLM 호출은 최초 시도를 포함해 최대 3회 수행합니다.
 - 최대 시도 횟수를 모두 사용하면 자동 재시도를 종료합니다.
 - 최종 실패 이후 사용자가 다시 요청하면 새로운 `analysisRequestId`를 생성합니다.
-- 현재 구현과 목표 정책을 구분하며, 세부 구현값을 이 문서에서 미리 확정하지 않습니다.
+- 현재 구현과 목표 정책을 구분하며, 조정 가능한 횟수와 시간은 application configuration으로 관리합니다.
 
 ## 오류 분류
 
@@ -52,14 +52,20 @@ PR 1에서는 후속 구현이 따라야 할 정책만 확정합니다. backoff 
 | Pickle 결과 통지 | 제한된 재시도 필요 | PR 3에서 현재 동작을 테스트로 고정하고 PR 7에서 책임 분리 |
 | Pizza response 메시지 처리 | 반복 실패 메시지를 [`DLQ`](#dlq)로 격리 | PR 6에서 삭제·재처리 판정, PR 9에서 실제 SQS 검증 |
 
-최대 3회는 최초 시도 1회와 추가 재시도 최대 2회를 뜻합니다. Pickle 결과 통지의 정확한 최대 횟수는 현재 문서에서 확정하지 않습니다.
+최대 3회는 최초 시도 1회와 추가 재시도 최대 2회를 뜻합니다. Pizza는 최초 발행, 발행 실패 후 재시도와 stale `RUNNING` 복구 후 재발행을 모두 하나의 `attempt_count`에 포함합니다. 별도의 recovery 횟수는 관리하지 않습니다. 일시 장애에서 회복할 기회를 주면서 영구 장애를 무한 반복하지 않기 위한 초기 운영값이며, AWS 제한이나 실제 장애 지속 시간을 근거로 산출한 고정값은 아닙니다. Pizza의 최대 시도 횟수는 application configuration으로 관리하고 운영 지표에 따라 조정합니다. Pickle 결과 통지의 정확한 최대 횟수는 현재 문서에서 확정하지 않습니다.
 
 ## backoff 원칙
 
 - Pizza request queue 발행과 Pickle LLM 호출의 재시도 사이에 backoff를 적용합니다.
 - Pizza의 다음 시도 가능 시각은 `next_retry_at`에 저장합니다.
-- 구체적인 계산식, 간격과 상한은 Pizza 이슈 #21과 Pickle PR 8에서 결정합니다.
+- Pizza request queue 발행은 `initialDelay × 2^(attemptCount - 1)`로 기본 지연을 계산하는 exponential backoff를 사용하고 설정된 상한을 넘지 않습니다.
+- `initialDelay`가 10초이면 첫 번째 실패 후 10초, 두 번째 실패 후 20초가 기본 지연입니다.
+- 여러 요청의 재시도 시점이 한꺼번에 몰리지 않도록 기본 지연에 jitter를 적용합니다. 구체적인 jitter 계산 방식은 이슈 #21의 구현과 테스트에서 확정합니다.
+- Pizza의 `initialDelay`, 배수와 상한은 application configuration으로 관리합니다.
+- Pickle LLM 호출의 구체적인 계산식, 간격과 상한은 Pickle PR 8에서 결정합니다.
 - 구현 PR에서는 설정값과 자동화 테스트를 함께 추가합니다.
+
+backoff는 일시 장애가 해소될 시간을 확보하고 장애 중인 외부 시스템에 즉시 요청을 집중하지 않기 위해 사용합니다. 영구 오류에는 backoff를 적용하지 않고 즉시 `FAILED`로 종료합니다.
 
 ## [`stale job`](#stale-job) 복구
 
@@ -73,11 +79,15 @@ PR 1에서는 후속 구현이 따라야 할 정책만 확정합니다. backoff 
 ### Pizza `RUNNING`
 
 - 정상 처리 제한 시간을 넘긴 요청만 복구 대상으로 판정합니다.
-- 최대 시도 횟수가 남았으면 같은 요청 ID로 다시 전달합니다.
-- 최대 시도 횟수를 사용했으면 `FAILED`로 종료합니다.
+- recovery scheduler는 정체된 요청을 제한된 batch로 선점합니다.
+- 여러 인스턴스가 같은 요청을 복구하지 않도록 `FOR UPDATE SKIP LOCKED`를 사용합니다.
+- 최대 시도 횟수가 남았으면 같은 요청 ID를 유지한 채 `QUEUED`로 전환하고 `next_retry_at`을 갱신합니다.
+- SQS 재발행은 recovery scheduler가 직접 수행하지 않고 기존 Dispatcher가 담당합니다.
+- Dispatcher가 복구된 요청을 재발행할 때도 기존 `attempt_count`를 증가시킵니다.
+- 최대 시도 횟수를 사용한 `RUNNING`이 stale 상태가 되면 추가 발행 없이 `FAILED`로 종료합니다.
 - 애플리케이션 재시작만을 이유로 모든 `RUNNING`을 즉시 재전송하지 않습니다.
 
-Pizza의 구체적인 [`stale job`](#stale-job) 판정 시간은 이슈 #21에서 구현과 복구 테스트를 작성하며 결정합니다. Pickle의 기존 복구 동작은 PR 3에서 테스트로 고정한 뒤 PR 7의 책임 분리 과정에서 유지 여부를 판단합니다.
+Pizza의 구체적인 [`stale job`](#stale-job) 판정 시간, recovery 실행 주기와 batch 크기는 이슈 #21에서 Pickle 정상 처리 시간과 SQS `visibility timeout`을 확인한 뒤 설정값과 복구 테스트로 확정합니다. Pickle의 기존 복구 동작은 PR 3에서 테스트로 고정한 뒤 PR 7의 책임 분리 과정에서 유지 여부를 판단합니다.
 
 ## 중복과 충돌 메시지
 
