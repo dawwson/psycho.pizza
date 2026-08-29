@@ -111,7 +111,7 @@ sequenceDiagram
 - 부하 테스트에는 fake LLM을 사용하고 실제 OpenAI API는 소규모 품질 평가에만 사용합니다.
 - 대규모 아키텍처 개편보다 분석 파이프라인에 필요한 범위의 변경을 우선합니다.
 
-Pizza request queue 발행의 backoff 기본값은 [실패 처리 정책](failure-policy.md)에서 관리합니다. 아직 확정되지 않은 timeout, Pickle backoff와 SQS 설정값은 담당 구현 및 테스트 PR에서 결정합니다.
+Pizza request queue 발행의 backoff 원칙은 [실패 처리 정책](failure-policy.md)에서 관리한다. 구체적인 계산식과 설정값은 담당 구현 및 테스트 PR에서 결정한다.
 
 ## 문서 동기화
 

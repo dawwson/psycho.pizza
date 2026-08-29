@@ -79,7 +79,7 @@ stateDiagram-v2
 | `QUEUED` | `QUEUED` | Pizza Dispatcher | 재시도 가능한 전송 오류이며 최대 시도에 도달하지 않음 |
 | `QUEUED` | `RUNNING` | Pizza Dispatcher | SQS request queue 전송 성공 |
 | `QUEUED` | `FAILED` | Pizza Dispatcher | 영구 오류 또는 전송 재시도 소진 |
-| `RUNNING` | `QUEUED` | Pizza recovery | 정체 작업 기준을 만족하고 재전송 한도가 남음 |
+| `RUNNING` | `QUEUED` | Pizza recovery | 정체 작업 기준을 만족하고 최대 발행 시도 횟수가 남음 |
 | `RUNNING` | `DONE` | Pizza result consumer | 요청 ID가 일치하는 유효한 성공 결과를 최초 반영 |
 | `RUNNING` | `FAILED` | Pizza result consumer 또는 recovery | Pickle의 최종 실패 결과를 반영하거나 최대 발행 시도를 사용한 요청이 stale로 판정됨 |
 
@@ -126,18 +126,15 @@ stateDiagram-v2
 
 ## 정체 작업 복구 원칙
 
-정체 작업(stale job)은 정상 처리 제한 시간을 초과했지만 종료 상태로 전환되지 않은 `QUEUED` 또는 `RUNNING` 분석 요청입니다. 상태 이름만으로 정체 여부를 판단하지 않고 마지막 시도 시각, 다음 시도 가능 시각, 상태 체류 시간과 최대 시도 횟수를 함께 사용합니다.
+정체 작업(stale job)은 정상 처리 제한 시간을 초과했지만 종료 상태로 전환되지 않은 `QUEUED` 또는 `RUNNING` 분석 요청이다. 상태 이름만으로 정체 여부를 판단하지 않고 마지막 시도 시각, 다음 시도 가능 시각, 상태 체류 시간과 최대 시도 횟수를 함께 사용한다.
 
-- `QUEUED`: `next_retry_at`이 현재 시각 이전인 요청만 Dispatcher 대상이 됩니다.
-- `RUNNING`: 정상 처리 제한 시간을 넘긴 요청만 복구 후보가 됩니다.
-- recovery scheduler는 정체된 `RUNNING`을 제한된 batch와 `FOR UPDATE SKIP LOCKED`로 선점합니다.
-- 최대 발행 시도 횟수가 남은 `RUNNING`은 같은 요청 ID를 유지한 채 `QUEUED`로 전환하고 `next_retry_at`을 갱신합니다.
-- recovery scheduler는 직접 메시지를 발행하지 않으며, 재발행은 기존 Dispatcher가 담당합니다.
-- 최초 발행, 발행 실패 후 재시도와 stale 복구 후 재발행은 하나의 `attempt_count`를 공유하며 별도의 recovery 횟수는 관리하지 않습니다.
-- 최대 시도 횟수를 사용한 `RUNNING`이 stale 상태가 되면 추가 발행 없이 `FAILED`로 종료합니다.
-- 애플리케이션 시작만을 이유로 모든 `RUNNING`을 즉시 `QUEUED`로 바꾸지 않습니다.
+- `QUEUED`: `next_retry_at`이 현재 시각 이전인 요청만 Dispatcher 대상이 된다.
+- `RUNNING`: 정상 처리 제한 시간을 넘긴 요청만 복구 후보가 된다.
+- 최대 발행 시도 횟수가 남은 `RUNNING`은 같은 요청 ID를 유지한 채 `QUEUED`로 전환한다.
+- 최대 발행 시도 횟수를 사용한 `RUNNING`이 stale 상태가 되면 `FAILED`로 종료한다.
+- 애플리케이션 시작만을 이유로 모든 `RUNNING`을 즉시 `QUEUED`로 바꾸지 않는다.
 
-구체적인 제한 횟수, backoff와 오류 분류는 실패 처리 정책에서 정의합니다. `RUNNING` 제한 시간, recovery 실행 주기와 batch 크기는 Pickle 정상 처리 시간과 SQS `visibility timeout`을 확인한 뒤 이슈 #21의 설정값과 테스트로 확정합니다.
+시도 횟수의 계산, recovery 선점과 재발행 책임은 [실패 처리 정책](failure-policy.md#stale-job-복구)에서 정의한다. `RUNNING` 제한 시간, recovery 실행 주기와 batch 크기는 Pickle 정상 처리 시간과 SQS `visibility timeout`을 확인한 뒤 이슈 #21의 설정값과 테스트로 확정한다.
 
 ## 구현 차이
 
