@@ -51,7 +51,7 @@ sequenceDiagram
 | `QUEUED` | Pizza DB에 요청이 저장됐으며 Pickle 전달을 기다리거나 다음 전송 시각을 기다리는 상태 | 요청 생성 또는 제한된 복구 | 전송 시도 정보 갱신 |
 | `RUNNING` | SQS request queue 전송이 성공해 Pickle의 최종 결과를 기다리는 상태 | Dispatcher의 전송 성공 | `started_at` 기록 |
 | `DONE` | 성공 결과가 반영되고 분석 리포트를 조회할 수 있는 종료 상태 | 유효한 성공 결과 반영 | `completed_at` 기록, 오류 정보 제거 |
-| `FAILED` | Pizza 또는 Pickle에서 복구 불가능한 최종 실패로 판정한 종료 상태 | 재시도 소진 또는 최종 실패 결과 반영 | `completed_at`, 실패 코드와 설명 기록 |
+| `FAILED` | Pizza 또는 Pickle에서 복구 불가능한 최종 실패로 판정한 종료 상태 | 재시도 소진 또는 최종 실패 결과 반영 | `completed_at`과 [실패 처리 정책](failure-policy.md#실패-정보-저장-범위)에 정의된 실패 정보 기록 |
 
 `DONE`과 `FAILED`는 종료 상태입니다. 동일 메시지의 재처리는 기존 결과를 유지해야 하며 새로운 상태 전이나 리포트 중복 갱신을 만들지 않아야 합니다.
 
@@ -134,7 +134,7 @@ stateDiagram-v2
 - 최대 발행 시도 횟수를 사용한 `RUNNING`이 stale 상태가 되면 `FAILED`로 종료한다.
 - 애플리케이션 시작만을 이유로 모든 `RUNNING`을 즉시 `QUEUED`로 바꾸지 않는다.
 
-시도 횟수의 계산, recovery 선점과 재발행 책임은 [실패 처리 정책](failure-policy.md#stale-job-복구)에서 정의한다. `RUNNING` 제한 시간, recovery 실행 주기와 batch 크기는 Pickle 정상 처리 시간과 SQS `visibility timeout`을 확인한 뒤 이슈 #21의 설정값과 테스트로 확정한다.
+시도 횟수의 계산, recovery 선점, 재발행 책임과 초기 설정값은 [실패 처리 정책](failure-policy.md#stale-job-복구)에서 정의한다.
 
 ## 구현 차이
 

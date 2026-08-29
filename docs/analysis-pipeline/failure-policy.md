@@ -41,7 +41,12 @@ PR 1에서는 후속 구현이 따라야 할 정책만 확정했다. Pizza reque
 | Pickle → LLM | 잘못된 요청, 빈 응답, 결과 validation 실패 | 재시도 가능 여부를 판정하고 반복 실패 시 최종 실패 |
 | Pizza 결과 검증 | 잘못된 JSON, 모순된 성공·실패 조합, 알 수 없는 요청 ID | 상태를 변경하지 않고 실패 메시지로 처리 |
 
-오류 코드의 구체적인 목록과 예외 매핑은 Pizza 이슈 #21, Pickle PR 8에서 구현과 테스트를 작성하며 확정합니다.
+### 실패 정보 저장 범위
+
+- Pizza 이슈 #21은 발행 실패 이유를 기존 `error_message`에 저장한다.
+- 발행 실패 전용 `error_code`는 현재 API, 지표와 알림에서 사용하는 소비처가 없으므로 추가하지 않는다.
+- 발행 실패 전용 `error_code`는 실패 유형별 지표와 알림을 설계하는 observability 작업에서 분류 기준과 함께 추가한다.
+- Pickle이 보내는 최종 실패 오류 코드와 예외 매핑은 Pickle PR 8과 Pizza 결과 소비 PR에서 구현과 테스트를 작성하며 확정한다.
 
 ## 단계별 최대 시도 횟수
 
@@ -63,7 +68,11 @@ PR 1에서는 후속 구현이 따라야 할 정책만 확정했다. Pizza reque
 
 - Pizza request queue 발행과 Pickle LLM 호출의 재시도 사이에 backoff를 적용한다.
 - Pizza의 다음 시도 가능 시각은 `next_retry_at`에 저장한다.
-- Pizza의 backoff 계산식, 초기 지연, 상한과 jitter 적용 여부는 이슈 #21의 코드와 테스트를 작성할 때 결정한다.
+- Pizza는 최초 실패 후 5초, 다음 실패 후 10초를 기다리는 backoff로 시작한다.
+- Pizza에는 jitter를 적용하지 않는다.
+  - 최대 시도가 3회이고 Dispatcher가 batch 제한과 `FOR UPDATE SKIP LOCKED`로 작업을 분산한다.
+  - 현재 규모에서는 이 구조로 재시도 집중을 완화할 수 있다고 판단한다.
+  - 운영에서 재시도 집중이 확인되면 jitter를 도입한다.
 - Pickle LLM 호출의 구체적인 계산식, 간격과 상한은 Pickle PR 8에서 결정한다.
 - 구현 PR에서는 설정값과 자동화 테스트를 함께 추가한다.
 
@@ -76,7 +85,7 @@ backoff는 일시 장애가 해소될 시간을 확보하고 장애 중인 외�
 ### Pizza `QUEUED`
 
 - `next_retry_at`이 지난 요청을 재시도 대상으로 조회한다.
-- 최대 3회를 사용한 요청은 `FAILED`로 종료하고 실패 코드를 저장한다.
+- 최대 3회를 사용한 요청은 `FAILED`로 종료하고 실패 이유를 저장한다.
 
 ### Pizza `RUNNING`
 
@@ -87,9 +96,18 @@ backoff는 일시 장애가 해소될 시간을 확보하고 장애 중인 외�
 - SQS 재발행은 recovery scheduler가 직접 수행하지 않고 기존 Dispatcher가 담당한다.
 - Dispatcher가 복구된 요청을 재발행할 때도 기존 `attempt_count`를 증가시킨다.
 - 최대 시도 횟수를 사용한 `RUNNING`이 stale 상태가 되면 추가 발행 없이 `FAILED`로 종료한다.
-- 애플리케이션 재시작만을 이유로 모든 `RUNNING`을 즉시 재전송하지 않는다.
 
-Pizza의 구체적인 [`stale job`](#stale-job) 판정 시간, recovery 실행 주기와 batch 크기는 이슈 #21에서 Pickle 정상 처리 시간과 SQS `visibility timeout`을 확인한 뒤 설정값과 복구 테스트로 확정한다. Pickle의 기존 복구 동작은 PR 3에서 테스트로 고정한 뒤 PR 7의 책임 분리 과정에서 유지 여부를 판단한다.
+Pizza는 다음 설정으로 recovery를 시작한다.
+
+| 설정 | 초기값 | 선택 이유 |
+| --- | --- | --- |
+| `RUNNING` 제한 시간 | 10분 | Pickle의 SQS `visibility timeout` 120초와 recovery lease 300초보다 길게 두어 정상 작업의 성급한 재발행 방지 |
+| recovery 실행 주기 | 30초 | 복구 지연과 polling 부하를 함께 고려한 초기 운영값 |
+| recovery batch 크기 | 10 | 기존 Dispatcher의 처리 단위와 현재 규모에 맞춘 초기 운영값 |
+
+이 값들은 최적값이나 외부 제한에서 산출한 고정값이 아니다. application configuration으로 관리하고 운영 지표에 따라 조정한다.
+
+Pickle의 기존 복구 동작은 PR 3에서 테스트로 고정한 뒤 PR 7의 책임 분리 과정에서 유지 여부를 판단한다.
 
 ## 중복과 충돌 메시지
 
@@ -123,7 +141,7 @@ PR 1에서는 [`DLQ`](#dlq) 격리 원칙만 정의하며 모니터링, 수동 �
 - 반복되는 빈 응답 또는 결과 validation 실패가 최종 실패 기준에 도달한 경우
 - 최대 발행 시도 횟수를 사용한 `RUNNING` 요청이 [`stale job`](#stale-job)으로 판정된 경우
 
-Pizza에는 `FAILED`, 실패 코드, 실패 이유와 완료 시각을 저장합니다. 발행 실패에 필요한 schema와 오류 형식은 이슈 #21, 결과 소비 실패는 PR 6에서 확정합니다.
+Pizza 발행 실패와 Pickle 최종 실패에서 저장하는 정보는 [실패 정보 저장 범위](#실패-정보-저장-범위)를 따른다.
 
 ## 현재 구현과 목표 정책의 차이
 
