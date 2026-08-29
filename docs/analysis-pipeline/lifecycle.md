@@ -66,7 +66,7 @@ stateDiagram-v2
     RUNNING --> RUNNING: 진행 확인 또는 중복 요청 전달
     RUNNING --> QUEUED: 정체 작업 재전송 결정
     RUNNING --> DONE: 성공 결과 반영
-    RUNNING --> FAILED: Pickle 최종 실패 반영 또는 복구 한도 초과
+    RUNNING --> FAILED: Pickle 최종 실패 반영 또는 발행 시도 소진 후 stale 판정
     DONE --> DONE: 동일 성공 결과 재수신
     FAILED --> FAILED: 동일 실패 결과 재수신
 ```
@@ -81,7 +81,7 @@ stateDiagram-v2
 | `QUEUED` | `FAILED` | Pizza Dispatcher | 영구 오류 또는 전송 재시도 소진 |
 | `RUNNING` | `QUEUED` | Pizza recovery | 정체 작업 기준을 만족하고 재전송 한도가 남음 |
 | `RUNNING` | `DONE` | Pizza result consumer | 요청 ID가 일치하는 유효한 성공 결과를 최초 반영 |
-| `RUNNING` | `FAILED` | Pizza result consumer 또는 recovery | Pickle의 최종 실패 결과를 반영하거나 복구 한도를 초과 |
+| `RUNNING` | `FAILED` | Pizza result consumer 또는 recovery | Pickle의 최종 실패 결과를 반영하거나 최대 발행 시도를 사용한 요청이 stale로 판정됨 |
 
 자기 전이는 상태 변경이 아니라 동일 작업의 재확인 또는 중복 메시지 수신을 표현합니다. 시도 횟수나 마지막 수신 시각 같은 부가 정보는 바뀔 수 있지만 lifecycle 결과는 바뀌지 않습니다.
 
@@ -131,7 +131,7 @@ stateDiagram-v2
 - `QUEUED`: `next_retry_at`이 현재 시각 이전인 요청만 Dispatcher 대상이 됩니다.
 - `RUNNING`: 정상 처리 제한 시간을 넘긴 요청만 복구 후보가 됩니다.
 - recovery scheduler는 정체된 `RUNNING`을 제한된 batch와 `FOR UPDATE SKIP LOCKED`로 선점합니다.
-- 복구 한도가 남은 `RUNNING`은 같은 요청 ID를 유지한 채 `QUEUED`로 전환하고 `next_retry_at`을 갱신합니다.
+- 최대 발행 시도 횟수가 남은 `RUNNING`은 같은 요청 ID를 유지한 채 `QUEUED`로 전환하고 `next_retry_at`을 갱신합니다.
 - recovery scheduler는 직접 메시지를 발행하지 않으며, 재발행은 기존 Dispatcher가 담당합니다.
 - 최초 발행, 발행 실패 후 재시도와 stale 복구 후 재발행은 하나의 `attempt_count`를 공유하며 별도의 recovery 횟수는 관리하지 않습니다.
 - 최대 시도 횟수를 사용한 `RUNNING`이 stale 상태가 되면 추가 발행 없이 `FAILED`로 종료합니다.

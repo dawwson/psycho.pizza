@@ -61,7 +61,7 @@ PR 1에서는 후속 구현이 따라야 할 정책만 확정했습니다. Pizza
 - Pizza request queue 발행은 `initialDelay × 2^(attemptCount - 1)`로 기본 지연을 계산하는 exponential backoff를 사용하고 설정된 상한을 넘지 않습니다.
 - `initialDelay`가 10초이면 첫 번째 실패 후 10초, 두 번째 실패 후 20초가 기본 지연입니다.
 - 여러 요청의 재시도 시점이 한꺼번에 몰리지 않도록 기본 지연에 jitter를 적용합니다. 구체적인 jitter 계산 방식은 이슈 #21의 구현과 테스트에서 확정합니다.
-- Pizza의 `initialDelay`, 배수와 상한은 application configuration으로 관리합니다.
+- Pizza의 `initialDelay`와 상한은 application configuration으로 관리합니다.
 - Pickle LLM 호출의 구체적인 계산식, 간격과 상한은 Pickle PR 8에서 결정합니다.
 - 구현 PR에서는 설정값과 자동화 테스트를 함께 추가합니다.
 
@@ -119,7 +119,7 @@ PR 1에서는 [`DLQ`](#dlq) 격리 원칙만 정의하며 모니터링, 수동 �
 - Pizza request queue 발행 최대 3회를 사용한 경우
 - Pickle LLM 호출 최대 3회를 사용한 경우
 - 반복되는 빈 응답 또는 결과 validation 실패가 최종 실패 기준에 도달한 경우
-- [`stale job`](#stale-job) 복구 한도를 사용한 경우
+- 최대 발행 시도 횟수를 사용한 `RUNNING` 요청이 [`stale job`](#stale-job)으로 판정된 경우
 
 Pizza에는 `FAILED`, 실패 코드, 실패 이유와 완료 시각을 저장합니다. 발행 실패에 필요한 schema와 오류 형식은 이슈 #21, 결과 소비 실패는 PR 6에서 확정합니다.
 
