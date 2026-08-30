@@ -39,6 +39,9 @@ class AnalysisRequestTests {
         assertThat(request.startedAt).isNull()
         assertThat(request.completedAt).isNull()
         assertThat(request.errorMessage).isNull()
+        assertThat(request.attemptCount).isZero()
+        assertThat(request.lastAttemptAt).isNull()
+        assertThat(request.nextRetryAt).isNull()
     }
 
     @Nested
@@ -56,6 +59,48 @@ class AnalysisRequestTests {
             assertThat(request.startedAt).isBetween(before, Instant.now())
             assertThat(request.completedAt).isNull()
             assertThat(request.errorMessage).isNull()
+            assertThat(request.nextRetryAt).isNull()
+        }
+
+        @Test
+        fun `발행 시도를 기록하면 횟수와 마지막 시각을 갱신한다`() {
+            val request = createRequest()
+            val firstAttemptAt = Instant.parse("2026-08-30T01:00:00Z")
+            val secondAttemptAt = Instant.parse("2026-08-30T01:01:00Z")
+
+            request.recordDispatchAttempt(firstAttemptAt)
+            request.scheduleRetry(secondAttemptAt)
+            request.recordDispatchAttempt(secondAttemptAt)
+
+            assertThat(request.attemptCount).isEqualTo(2)
+            assertThat(request.lastAttemptAt).isEqualTo(secondAttemptAt)
+            assertThat(request.nextRetryAt).isNull()
+        }
+
+        @Test
+        fun `재시도를 예약하면 다음 발행 가능 시각을 기록한다`() {
+            val request = createRequest()
+            val retryAt = Instant.parse("2026-08-30T01:00:05Z")
+
+            request.scheduleRetry(retryAt)
+
+            assertThat(request.status).isEqualTo(AnalysisRequestStatus.QUEUED)
+            assertThat(request.nextRetryAt).isEqualTo(retryAt)
+        }
+
+        @Test
+        fun `FAILED로 변경하면 완료 시각과 오류 메시지를 기록한다`() {
+            val request = createRequest()
+            val retryAt = Instant.parse("2026-08-30T01:00:05Z")
+            request.scheduleRetry(retryAt)
+            val before = Instant.now()
+
+            request.markAsFailed("분석 입력 생성 실패")
+
+            assertThat(request.status).isEqualTo(AnalysisRequestStatus.FAILED)
+            assertThat(request.completedAt).isBetween(before, Instant.now())
+            assertThat(request.errorMessage).isEqualTo("분석 입력 생성 실패")
+            assertThat(request.nextRetryAt).isNull()
         }
     }
 
@@ -99,15 +144,17 @@ class AnalysisRequestTests {
         }
 
         @Test
-        fun `재시도 대기 상태로 복구하면 시작 시각을 초기화한다`() {
+        fun `재시도 대기 상태로 복구하면 시작 시각을 초기화하고 다음 발행 가능 시각을 기록한다`() {
             val request = requestIn(AnalysisRequestStatus.RUNNING)
+            val retryAt = Instant.parse("2026-08-30T01:10:00Z")
 
-            request.markAsQueuedForRetry()
+            request.markAsQueuedForRetry(retryAt)
 
             assertThat(request.status).isEqualTo(AnalysisRequestStatus.QUEUED)
             assertThat(request.startedAt).isNull()
             assertThat(request.completedAt).isNull()
             assertThat(request.errorMessage).isNull()
+            assertThat(request.nextRetryAt).isEqualTo(retryAt)
         }
     }
 
@@ -123,6 +170,9 @@ class AnalysisRequestTests {
         val originalStartedAt = request.startedAt
         val originalCompletedAt = request.completedAt
         val originalErrorMessage = request.errorMessage
+        val originalAttemptCount = request.attemptCount
+        val originalLastAttemptAt = request.lastAttemptAt
+        val originalNextRetryAt = request.nextRetryAt
 
         // When: catchThrowableOfType은 예상 타입의 예외를 잡아 Then 단계에서 필드까지 검사하게 해준다.
         val exception =
@@ -136,17 +186,28 @@ class AnalysisRequestTests {
         assertThat(request.startedAt).isEqualTo(originalStartedAt)
         assertThat(request.completedAt).isEqualTo(originalCompletedAt)
         assertThat(request.errorMessage).isEqualTo(originalErrorMessage)
+        assertThat(request.attemptCount).isEqualTo(originalAttemptCount)
+        assertThat(request.lastAttemptAt).isEqualTo(originalLastAttemptAt)
+        assertThat(request.nextRetryAt).isEqualTo(originalNextRetryAt)
     }
 
     enum class Transition(
-        val requiredStatus: AnalysisRequestStatus,
+        val allowedStatuses: Set<AnalysisRequestStatus>,
         val apply: (AnalysisRequest) -> Unit,
     ) {
-        MARK_RUNNING(AnalysisRequestStatus.QUEUED, AnalysisRequest::markAsRunning),
-        MARK_DONE(AnalysisRequestStatus.RUNNING, AnalysisRequest::markAsDone),
-        COMPLETE(AnalysisRequestStatus.RUNNING, { it.complete("분석 결과") }),
-        MARK_FAILED(AnalysisRequestStatus.RUNNING, { it.markAsFailed("분석 실패") }),
-        MARK_QUEUED_FOR_RETRY(AnalysisRequestStatus.RUNNING, AnalysisRequest::markAsQueuedForRetry),
+        RECORD_DISPATCH_ATTEMPT(setOf(AnalysisRequestStatus.QUEUED), { it.recordDispatchAttempt(Instant.EPOCH) }),
+        SCHEDULE_RETRY(setOf(AnalysisRequestStatus.QUEUED), { it.scheduleRetry(Instant.EPOCH) }),
+        MARK_RUNNING(setOf(AnalysisRequestStatus.QUEUED), AnalysisRequest::markAsRunning),
+        MARK_DONE(setOf(AnalysisRequestStatus.RUNNING), AnalysisRequest::markAsDone),
+        COMPLETE(setOf(AnalysisRequestStatus.RUNNING), { it.complete("분석 결과") }),
+        MARK_FAILED(
+            setOf(AnalysisRequestStatus.QUEUED, AnalysisRequestStatus.RUNNING),
+            { it.markAsFailed("분석 실패") },
+        ),
+        MARK_QUEUED_FOR_RETRY(
+            setOf(AnalysisRequestStatus.RUNNING),
+            { it.markAsQueuedForRetry(Instant.EPOCH) },
+        ),
     }
 
     companion object {
@@ -159,7 +220,7 @@ class AnalysisRequestTests {
             AnalysisRequestStatus.entries
                 .flatMap { status ->
                     Transition.entries
-                        .filter { it.requiredStatus != status }
+                        .filter { status !in it.allowedStatuses }
                         .map { transition -> Arguments.of(status, transition) }
                 }.stream()
 

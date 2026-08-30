@@ -1,5 +1,6 @@
 package pizza.psycho.sos.analysis.infrastructure.persistence
 
+import jakarta.persistence.EntityManager
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
@@ -17,6 +18,7 @@ import org.testcontainers.junit.jupiter.Testcontainers
 import pizza.psycho.sos.analysis.domain.entity.AnalysisRequest
 import pizza.psycho.sos.identity.challenge.support.PostgresTestContainerSupport
 import java.time.Duration
+import java.time.Instant
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
@@ -31,10 +33,32 @@ import java.util.concurrent.TimeUnit
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class AnalysisRequestRepositoryPostgresTests : PostgresTestContainerSupport() {
     @Autowired
+    private lateinit var entityManager: EntityManager
+
+    @Autowired
     private lateinit var analysisRequestRepository: AnalysisRequestRepository
 
     @Autowired
     private lateinit var transactionManager: PlatformTransactionManager
+
+    @Test
+    fun `발행 시도 정보를 저장하고 조회한다`() {
+        val attemptedAt = Instant.parse("2026-08-30T01:00:00Z")
+        val retryAt = Instant.parse("2026-08-30T01:00:05Z")
+        val request =
+            newAnalysisRequest().apply {
+                recordDispatchAttempt(attemptedAt)
+                scheduleRetry(retryAt)
+            }
+
+        val saved = analysisRequestRepository.saveAndFlush(request)
+        entityManager.clear()
+        val found = analysisRequestRepository.findById(saved.id!!).orElseThrow()
+
+        assertThat(found.attemptCount).isEqualTo(1)
+        assertThat(found.lastAttemptAt).isEqualTo(attemptedAt)
+        assertThat(found.nextRetryAt).isEqualTo(retryAt)
+    }
 
     @Test
     fun `QUEUED 요청을 선점하면 batch 크기만큼 반환한다`() {
