@@ -309,27 +309,25 @@ branch, commit, merge와 release의 세부 규칙은 [Git 브랜치·릴리스·
 
 구현 중에는 현재 변경과 직접 관련된 targeted test를 우선 실행한다.
 
-예:
-
-```text
-./gradlew test --tests "*AnalysisRequestServiceTest"
-```
+- Commit Plan으로 작업을 나눴다면 현재 구현한 commit 범위만 검증한다.
+- 후속 commit에서 구현할 동작이나 아직 변경하지 않은 계층까지 검증 범위를 넓히지 않는다.
+- 영향받는 테스트를 특정하기 어렵거나 CI 실패를 재현할 때만 전체 테스트를 실행한다.
 
 ## PR 준비 전
 
 Sub-issue에서 PR에 포함할 변경이 모두 끝나면 변경과 직접 관련된 로컬 검증을 수행한다.
 
-| 변경 | 로컬 검증                                     |
-| --- |-------------------------------------------|
+| 변경 | 로컬 검증 |
+| --- | --- |
 | Kotlin 코드 | 관련 targeted test, `./gradlew ktlintCheck` |
-| `integration` 태그 테스트 | 관련 targeted test                          |
-| PostgreSQL query, mapping 또는 migration | 관련 targeted test                          |
-| 빌드 또는 배포 설정 | `./gradlew bootJar`와 관련 script 검증         |
-| 문서만 변경 | 링크, Mermaid, 예제 명령과 `git diff --check`    |
+| `integration` 태그 테스트 | `integrationTest`의 관련 targeted test |
+| PostgreSQL query, mapping 또는 migration | `testTc`의 관련 targeted test |
+| 빌드 또는 배포 설정 | `./gradlew bootJar`와 관련 script 검증 |
+| 문서만 변경 | 링크, Mermaid, 예제 명령과 `git diff --check` |
 
 코드 동작을 변경할 때 필요한 회귀 테스트가 없으면 추가하거나 수정한다.
 
-전체 검증은 CI에서 수행한다.
+전체 테스트는 CI에서 수행한다.
 
 ## 재검증
 

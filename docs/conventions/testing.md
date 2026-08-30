@@ -8,6 +8,8 @@
 
 분석 요청 lifecycle의 상태별 정책, 중복 메시지, 재시도와 장애 시나리오처럼 기능에 종속된 검증 범위는 `docs/analysis-pipeline/` 아래의 관련 문서에서 관리합니다. 전용 테스트 문서는 실제 시나리오를 확정할 때 추가하며, 이 문서는 그러한 시나리오를 코드로 표현하는 공통 방법에 집중합니다.
 
+테스트 실행 시점과 검증 범위는 [Engineering Workflow v0.2](../workflow/engineering-workflow-v0.2.md#10-verification-strategy)를 따른다.
+
 ## 기본 기술 스택
 
 | 역할 | 기술 | 사용 목적 |
@@ -200,15 +202,3 @@ assertThat(request.status).isEqualTo(AnalysisRequestStatus.DONE)
 - framework 동작을 unit mock으로 완전히 재현했다고 표현하지 않습니다.
 - 단위 테스트가 검증하지 못한 transaction, persistence와 메시징 경계를 명시합니다.
 - 결함을 수정할 때는 바뀐 기대 동작과 회귀 테스트를 같은 변경에 포함합니다.
-
-## 검증 명령
-
-변경 범위에 맞는 최소 검증을 실행합니다.
-
-| 변경 범위 | 명령 |
-| --- | --- |
-| Kotlin 코드와 기본 단위 테스트 | `./gradlew ktlintCheck`, `./gradlew test` |
-| `integration` 태그 테스트 | `./gradlew integrationTest` |
-| PostgreSQL query, mapping 또는 migration | `./gradlew testTc` |
-
-테스트를 단독 실행해 빠르게 피드백을 받은 뒤 최종적으로 변경 범위에 필요한 전체 task를 실행합니다. 테스트를 통과시키기 위해 의미 있는 assertion을 삭제하거나 협력 객체 전체를 느슨한 mock으로 대체하지 않습니다.
