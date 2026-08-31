@@ -187,9 +187,9 @@ private fun createQueuedRequest(): AnalysisRequest =
 
 private fun AnalysisRequest.recordTwoFailedAttempts() {
     recordDispatchAttempt(TEST_NOW.minusSeconds(15))
-    scheduleRetry(TEST_NOW.minusSeconds(10), RETRYABLE_FAILURE_MESSAGE)
+    scheduleDispatchRetry(TEST_NOW.minusSeconds(10), RETRYABLE_FAILURE_MESSAGE)
     recordDispatchAttempt(TEST_NOW.minusSeconds(10))
-    scheduleRetry(TEST_NOW, RETRYABLE_FAILURE_MESSAGE)
+    scheduleDispatchRetry(TEST_NOW, RETRYABLE_FAILURE_MESSAGE)
 }
 
 private fun retryableFailure(): AnalysisRequestPublishResult.Failed.Retryable =

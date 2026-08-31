@@ -90,10 +90,10 @@ class AnalysisRecoveryServiceTests {
         repeat(attemptCount) { attemptIndex ->
             request.recordDispatchAttempt(now.minusSeconds((attemptCount - attemptIndex).toLong()))
             if (attemptIndex < attemptCount - 1) {
-                request.scheduleRetry(now, "일시적인 발행 실패")
+                request.scheduleDispatchRetry(now, "일시적인 발행 실패")
             }
         }
-        request.markAsRunning()
+        request.markAsRunning(now)
         return request
     }
 }

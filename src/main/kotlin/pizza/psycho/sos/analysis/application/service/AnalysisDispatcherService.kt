@@ -43,7 +43,7 @@ class AnalysisDispatcherService(
         val analysisRequestId = requireNotNull(analysisRequest.id) { "분석 요청을 발행하려면 ID가 필요합니다." }
 
         if (!analysisDispatchPolicy.canRetry(analysisRequest.attemptCount)) {
-            analysisRequest.markAsFailed(MAX_ATTEMPTS_EXCEEDED_MESSAGE)
+            analysisRequest.markAsFailed(MAX_ATTEMPTS_EXCEEDED_MESSAGE, now)
             log.error(
                 "분석 요청 발행 시도 횟수를 모두 사용해 실패 처리했습니다. analysisRequestId={}, attemptCount={}",
                 analysisRequestId,
@@ -66,7 +66,7 @@ class AnalysisDispatcherService(
                     sprintId = analysisRequest.targetId,
                 )
             } catch (exception: Exception) {
-                analysisRequest.markAsFailed(INPUT_CREATION_FAILED_MESSAGE)
+                analysisRequest.markAsFailed(INPUT_CREATION_FAILED_MESSAGE, now)
                 log.error(
                     "분석 입력을 생성할 수 없어 실패 처리했습니다. analysisRequestId={}",
                     analysisRequestId,
@@ -84,7 +84,7 @@ class AnalysisDispatcherService(
                 )
         ) {
             AnalysisRequestPublishResult.Published -> {
-                analysisRequest.markAsRunning()
+                analysisRequest.markAsRunning(now)
                 log.info(
                     "분석 요청 발행에 성공했습니다. analysisRequestId={}, attemptCount={}",
                     analysisRequestId,
@@ -95,7 +95,7 @@ class AnalysisDispatcherService(
             is AnalysisRequestPublishResult.Failed.Retryable -> handleRetryableFailure(analysisRequest, result, now)
 
             is AnalysisRequestPublishResult.Failed.Permanent -> {
-                analysisRequest.markAsFailed(result.message)
+                analysisRequest.markAsFailed(result.message, now)
                 log.error(
                     "분석 요청을 발행할 수 없어 실패 처리했습니다. analysisRequestId={}, attemptCount={}",
                     analysisRequestId,
@@ -121,7 +121,7 @@ class AnalysisDispatcherService(
                     attemptCount = analysisRequest.attemptCount,
                     failedAt = failedAt,
                 )
-            analysisRequest.scheduleRetry(nextRetryAt, failure.message)
+            analysisRequest.scheduleDispatchRetry(nextRetryAt, failure.message)
             log.warn(
                 "분석 요청 발행에 실패해 재시도를 예약했습니다. analysisRequestId={}, attemptCount={}, nextRetryAt={}",
                 analysisRequestId,
@@ -130,7 +130,7 @@ class AnalysisDispatcherService(
                 failure.cause,
             )
         } else {
-            analysisRequest.markAsFailed(MAX_ATTEMPTS_EXCEEDED_MESSAGE)
+            analysisRequest.markAsFailed(MAX_ATTEMPTS_EXCEEDED_MESSAGE, failedAt)
             log.error(
                 "분석 요청 발행 시도 횟수를 모두 사용해 실패 처리했습니다. analysisRequestId={}, attemptCount={}",
                 analysisRequestId,

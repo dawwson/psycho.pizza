@@ -55,9 +55,7 @@ class AnalysisRequest(
     var nextRetryAt: Instant? = null
         protected set
 
-    /**
-     * QUEUED 상태의 request queue 발행 시도를 기록한다.
-     */
+    // QUEUED 상태의 request queue 발행 시도를 기록한다.
     fun recordDispatchAttempt(attemptedAt: Instant) {
         if (status != AnalysisRequestStatus.QUEUED) {
             throw DomainException(
@@ -70,10 +68,8 @@ class AnalysisRequest(
         nextRetryAt = null
     }
 
-    /**
-     * QUEUED 상태의 다음 발행 가능 시각을 기록한다.
-     */
-    fun scheduleRetry(
+    // QUEUED 상태의 다음 발행 가능 시각을 기록한다.
+    fun scheduleDispatchRetry(
         retryAt: Instant,
         reason: String,
     ) {
@@ -88,7 +84,7 @@ class AnalysisRequest(
     }
 
     // QUEUED -> RUNNING
-    fun markAsRunning() {
+    fun markAsRunning(startedAt: Instant) {
         if (status != AnalysisRequestStatus.QUEUED) {
             throw DomainException(
                 AnalysisErrorCode.INVALID_ANALYSIS_STATE,
@@ -96,14 +92,14 @@ class AnalysisRequest(
             )
         }
         status = AnalysisRequestStatus.RUNNING
-        startedAt = Instant.now()
+        this.startedAt = startedAt
         completedAt = null
         errorMessage = null
         nextRetryAt = null
     }
 
     // RUNNING -> DONE
-    fun markAsDone() {
+    fun markAsCompleted(completedAt: Instant) {
         if (status != AnalysisRequestStatus.RUNNING) {
             throw DomainException(
                 AnalysisErrorCode.INVALID_ANALYSIS_STATE,
@@ -111,23 +107,14 @@ class AnalysisRequest(
             )
         }
         status = AnalysisRequestStatus.DONE
-        completedAt = Instant.now()
-    }
-
-    // RUNNING -> DONE
-    fun complete(result: Any?) {
-        if (status != AnalysisRequestStatus.RUNNING) {
-            throw DomainException(
-                AnalysisErrorCode.INVALID_ANALYSIS_STATE,
-                "분석 요청 상태가 RUNNING일 때만 완료할 수 있습니다. (현재 상태=$status)",
-            )
-        }
-        status = AnalysisRequestStatus.DONE
-        completedAt = Instant.now()
+        this.completedAt = completedAt
     }
 
     // QUEUED / RUNNING -> FAILED
-    fun markAsFailed(reason: String) {
+    fun markAsFailed(
+        reason: String,
+        failedAt: Instant,
+    ) {
         if (status != AnalysisRequestStatus.QUEUED && status != AnalysisRequestStatus.RUNNING) {
             throw DomainException(
                 AnalysisErrorCode.INVALID_ANALYSIS_STATE,
@@ -135,13 +122,13 @@ class AnalysisRequest(
             )
         }
         status = AnalysisRequestStatus.FAILED
-        completedAt = Instant.now()
+        completedAt = failedAt
         errorMessage = reason
         nextRetryAt = null
     }
 
     // RUNNING -> QUEUED
-    fun markAsQueuedForRetry(retryAt: Instant) {
+    fun rescheduleStaleRequest(retryAt: Instant) {
         if (status != AnalysisRequestStatus.RUNNING) {
             throw DomainException(
                 AnalysisErrorCode.INVALID_ANALYSIS_STATE,

@@ -16,6 +16,9 @@ import pizza.psycho.sos.analysis.domain.vo.AnalysisTargetType
 import pizza.psycho.sos.analysis.infrastructure.persistence.AnalysisReportRepository
 import pizza.psycho.sos.analysis.infrastructure.persistence.AnalysisRequestRepository
 import pizza.psycho.sos.common.handler.DomainException
+import java.time.Clock
+import java.time.Instant
+import java.time.ZoneOffset
 import java.util.Optional
 import java.util.UUID
 
@@ -44,7 +47,7 @@ class AnalysisLifecycleServiceTests {
 
             // 하나의 완료 처리에서 요청 상태와 리포트 내용이 함께 바뀌어야 한다.
             assertThat(request.status).isEqualTo(AnalysisRequestStatus.DONE)
-            assertThat(request.completedAt).isNotNull()
+            assertThat(request.completedAt).isEqualTo(TEST_NOW)
             assertThat(report.runId).isEqualTo("pickle-run-1")
             assertThat(report.aiInsight).isEqualTo("스프린트 분석 결과")
 
@@ -96,7 +99,12 @@ private class LifecycleFixture {
     // 검증 대상 service는 실제 객체이고 DB 접근만 mock repository로 대체한다.
     val analysisRequestRepository = mockk<AnalysisRequestRepository>()
     val analysisReportRepository = mockk<AnalysisReportRepository>()
-    val service = AnalysisLifecycleService(analysisRequestRepository, analysisReportRepository)
+    val service =
+        AnalysisLifecycleService(
+            analysisRequestRepository,
+            analysisReportRepository,
+            Clock.fixed(TEST_NOW, ZoneOffset.UTC),
+        )
 }
 
 private val AnalysisRequest.requiredId: UUID
@@ -107,7 +115,7 @@ private fun createRequestWithId(): AnalysisRequest =
         .create(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID())
         .apply { id = UUID.randomUUID() }
 
-private fun createRunningRequest(): AnalysisRequest = createRequestWithId().apply { markAsRunning() }
+private fun createRunningRequest(): AnalysisRequest = createRequestWithId().apply { markAsRunning(TEST_NOW.minusSeconds(1)) }
 
 private fun createReport(request: AnalysisRequest): AnalysisReport =
     AnalysisReport.create(
@@ -120,3 +128,5 @@ private fun createReport(request: AnalysisRequest): AnalysisReport =
         categoryPenalties = "[]",
         penaltyDetails = "[]",
     )
+
+private val TEST_NOW: Instant = Instant.parse("2026-08-31T01:00:00Z")

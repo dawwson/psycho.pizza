@@ -48,7 +48,7 @@ class AnalysisRequestRepositoryPostgresTests : PostgresTestContainerSupport() {
         val request =
             newAnalysisRequest().apply {
                 recordDispatchAttempt(attemptedAt)
-                scheduleRetry(retryAt, "일시적인 발행 실패")
+                scheduleDispatchRetry(retryAt, "일시적인 발행 실패")
             }
 
         val saved = analysisRequestRepository.saveAndFlush(request)
@@ -68,7 +68,7 @@ class AnalysisRequestRepositoryPostgresTests : PostgresTestContainerSupport() {
                 List(3) { newAnalysisRequest() },
             )
         analysisRequestRepository.saveAndFlush(
-            newAnalysisRequest().also { it.markAsRunning() },
+            newAnalysisRequest().also { it.markAsRunning(Instant.EPOCH) },
         )
 
         val claimed =
@@ -89,12 +89,12 @@ class AnalysisRequestRepositoryPostgresTests : PostgresTestContainerSupport() {
         val retryableRequest =
             newAnalysisRequest().apply {
                 recordDispatchAttempt(firstAttempt)
-                scheduleRetry(now, "일시적인 발행 실패")
+                scheduleDispatchRetry(now, "일시적인 발행 실패")
             }
         val waitingRequest =
             newAnalysisRequest().apply {
                 recordDispatchAttempt(firstAttempt)
-                scheduleRetry(now.plusSeconds(1), "일시적인 발행 실패")
+                scheduleDispatchRetry(now.plusSeconds(1), "일시적인 발행 실패")
             }
         val newRequest = newAnalysisRequest()
         analysisRequestRepository.saveAllAndFlush(listOf(retryableRequest, waitingRequest, newRequest))
@@ -277,7 +277,7 @@ class AnalysisRequestRepositoryPostgresTests : PostgresTestContainerSupport() {
         analysisRequestRepository.saveAndFlush(
             newAnalysisRequest().also {
                 it.recordDispatchAttempt(Instant.now())
-                it.markAsRunning()
+                it.markAsRunning(Instant.now())
             },
         )
 
