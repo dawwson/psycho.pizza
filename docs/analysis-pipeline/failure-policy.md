@@ -2,138 +2,118 @@
 
 ## 목적
 
-이 문서는 Pizza–Pickle 분석 파이프라인에서 오류를 분류하고 재시도, [`stale job`](#stale-job) 복구, 중복 메시지와 최종 실패를 처리하는 기준을 정의합니다.
+이 문서는 Pizza–Pickle 분석 파이프라인에서 오류를 재시도할지, 언제 최종 실패로 종료할지, 정체된 작업과 중복 메시지를 어떻게 처리할지 정의한다.
 
-PR 1에서는 후속 구현이 따라야 할 정책만 확정합니다. backoff 계산식, timeout, Pickle 결과 통지 횟수와 SQS `maxReceiveCount` 같은 세부 값은 해당 구현과 테스트 PR에서 결정합니다.
-
-중복 전달을 정상 상황으로 다루는 결정은 [ADR 0002](../adr/0002-handle-analysis-messages-idempotently.md), 메시지 필드와 성공·실패 조합은 [Pizza–Pickle 메시지 계약](message-contract.md)에 기록합니다.
+메시지의 성공·실패 조합은 [메시지 계약](message-contract.md), 상태 전이 결과는 [lifecycle](lifecycle.md)에서 관리한다. at-least-once 전달과 멱등성 결정은 [ADR 0002](../adr/0002-handle-analysis-messages-idempotently.md)에 기록한다.
 
 ## 기본 원칙
 
-- 재시도는 같은 `analysisRequestId` 안에서 수행합니다.
-- 일시적 오류만 자동 재시도하고 영구 오류는 최종 실패로 처리합니다.
-- Pizza request queue 발행과 Pickle LLM 호출은 최초 시도를 포함해 최대 3회 수행합니다.
-- 최대 시도 횟수를 모두 사용하면 자동 재시도를 종료합니다.
-- 최종 실패 이후 사용자가 다시 요청하면 새로운 `analysisRequestId`를 생성합니다.
-- 현재 구현과 목표 정책을 구분하며, 세부 구현값을 이 문서에서 미리 확정하지 않습니다.
+- 일시적 오류만 자동 재시도한다.
+- 재시도는 새로운 요청을 만들지 않고 같은 `analysisRequestId`에서 수행한다.
+- 최대 시도 횟수에는 최초 시도를 포함한다.
+- 영구 오류와 시도 소진은 `FAILED`로 종료한다.
+- 조정 가능한 횟수와 시간은 application configuration으로 관리한다.
+- 최종 실패 이후 사용자가 다시 요청하면 새로운 `analysisRequestId`를 생성한다.
 
 ## 오류 분류
 
-### 재시도 가능 오류
-
-같은 입력을 나중에 다시 처리하면 성공할 가능성이 있는 오류입니다.
-
-| 구간 | 예시 | 정책 |
+| 구간 | 재시도 가능 오류 | 영구 오류 |
 | --- | --- | --- |
-| Pizza → request queue | timeout, 일시적 연결 실패, AWS throttling, SQS 5xx | `QUEUED`를 유지하고 backoff 후 재시도 |
-| Pickle → LLM | timeout, 429, 일시적 연결 실패, LLM 5xx | 같은 Pickle Job에서 backoff 후 재시도 |
-| Pickle → response queue | 일시적 연결 또는 SQS 오류 | 저장된 결과를 유지하고 통지만 재시도 |
-| Pizza result consumer | 일시적 DB 또는 transaction 오류 | 메시지를 삭제하지 않고 재처리 허용 |
+| Pizza 입력 생성 | 현재 자동 재시도하지 않음 | 존재하지 않는 대상, 지원하지 않는 target, 입력 생성 실패 |
+| Pizza → request queue | AWS SDK가 retryable로 판정한 timeout, 연결 실패, throttling과 서비스 오류 | 직렬화 오류, 잘못된 설정, retryable이 아닌 SDK 오류 |
+| Pickle 요청 검증 | 없음 | 필수 필드 누락, 잘못된 식별자, 지원하지 않는 `schema_version` |
+| Pickle → LLM | timeout, 429, 연결 실패, LLM 5xx | 잘못된 요청, 반복되는 빈 응답, 결과 validation 실패 |
+| Pickle → response queue | 일시적 연결 또는 SQS 오류 | 계약으로 만들 수 없는 결과 |
+| Pizza result consumer | 일시적 DB 또는 transaction 오류 | 잘못된 JSON, 모순된 성공·실패 조합, 알 수 없는 요청 ID |
 
-### 영구 오류
+Pizza 입력 생성 중 발생한 예외는 현재 모두 영구 오류로 처리한다. 일시적인 DB 오류까지 구분해야 한다면 오류 분류 기준과 테스트를 먼저 추가한다.
 
-같은 입력으로 다시 처리해도 성공할 가능성이 없는 오류입니다.
+## Pizza 발행 retry
 
-| 구간 | 예시 | 정책 |
+Pizza request queue 발행 정책은 현재 구현되어 있다.
+
+| 설정 | 기본값 | 의미 |
 | --- | --- | --- |
-| Pizza 입력 생성 | 존재하지 않는 대상, 지원하지 않는 target, 분석 입력 생성 실패 | 요청을 `FAILED`로 종료 |
-| Pickle 요청 검증 | 필수 필드 누락, 잘못된 식별자, 지원하지 않는 `schema_version` | LLM을 호출하지 않고 실패 메시지로 처리 |
-| Pickle → LLM | 잘못된 요청, 빈 응답, 결과 validation 실패 | 재시도 가능 여부를 판정하고 반복 실패 시 최종 실패 |
-| Pizza 결과 검증 | 잘못된 JSON, 모순된 성공·실패 조합, 알 수 없는 요청 ID | 상태를 변경하지 않고 실패 메시지로 처리 |
+| 최대 발행 시도 | 3회 | 최초 시도 1회와 추가 retry 2회 |
+| 최초 retry 대기 | 5초 | 첫 실패 후 다음 발행까지 대기 시간 |
+| 다음 retry 대기 | 10초 | 두 번째 실패 후 다음 발행까지 대기 시간 |
 
-오류 코드의 구체적인 목록과 예외 매핑은 Pizza 이슈 #21, Pickle PR 8에서 구현과 테스트를 작성하며 확정합니다.
+발행할 때마다 `attempt_count`와 `last_attempt_at`을 갱신한다. 일시 오류이며 시도가 남으면 실패 이유와 `next_retry_at`을 저장한다. 성공하면 retry 정보와 오류 메시지를 정리하고 `RUNNING`으로 전환한다.
 
-## 단계별 최대 시도 횟수
+Pizza는 jitter를 적용하지 않는다. 현재 최대 시도가 3회이고 Dispatcher가 처리 수를 제한하며 `FOR UPDATE SKIP LOCKED`로 요청을 분산하기 때문이다. 운영에서 retry 집중이 확인되면 지표를 근거로 재검토한다.
 
-| 단계 | PR 1에서 확정하는 정책 | 세부 결정 시점 |
-| --- | --- | --- |
-| Pizza request queue 발행 | 최대 3회 | 이슈 #21에서 backoff와 오류별 처리 구현 |
-| Pickle LLM 호출 | 최대 3회 | PR 8에서 timeout, 429, 5xx와 validation 처리 구현 |
-| Pickle 결과 통지 | 제한된 재시도 필요 | PR 3에서 현재 동작을 테스트로 고정하고 PR 7에서 책임 분리 |
-| Pizza response 메시지 처리 | 반복 실패 메시지를 [`DLQ`](#dlq)로 격리 | PR 6에서 삭제·재처리 판정, PR 9에서 실제 SQS 검증 |
+## stale job 복구
 
-최대 3회는 최초 시도 1회와 추가 재시도 최대 2회를 뜻합니다. Pickle 결과 통지의 정확한 최대 횟수는 현재 문서에서 확정하지 않습니다.
+<a id="stale-job"></a>`stale job`은 정상 처리 제한 시간을 넘겼지만 종료 상태로 전환되지 않은 요청이다. 애플리케이션 시작이나 상태 이름만으로 stale 여부를 판단하지 않는다.
 
-## backoff 원칙
+### `QUEUED`
 
-- Pizza request queue 발행과 Pickle LLM 호출의 재시도 사이에 backoff를 적용합니다.
-- Pizza의 다음 시도 가능 시각은 `next_retry_at`에 저장합니다.
-- 구체적인 계산식, 간격과 상한은 Pizza 이슈 #21과 Pickle PR 8에서 결정합니다.
-- 구현 PR에서는 설정값과 자동화 테스트를 함께 추가합니다.
+- `next_retry_at`이 없거나 현재 시각이 지난 요청만 Dispatcher가 선점한다.
+- 최대 발행 시도를 사용한 요청은 추가 발행 없이 `FAILED`로 종료한다.
 
-## [`stale job`](#stale-job) 복구
+### `RUNNING`
 
-상태 이름만으로 [`stale job`](#stale-job)을 판정하지 않습니다. 마지막 처리 시각과 정상 처리 제한 시간을 기준으로 오래 멈춘 작업만 복구합니다.
+- `started_at`이 현재 시각보다 10분 이상 이전인 요청만 recovery가 선점한다.
+- 발행 시도가 남았으면 `QUEUED`로 전환하고 즉시 다시 발행할 수 있게 예약한다.
+- 발행 시도를 모두 사용했으면 `FAILED`로 종료한다.
+- recovery는 직접 SQS에 발행하지 않는다.
 
-### Pizza `QUEUED`
-
-- `next_retry_at`이 지난 요청을 재시도 대상으로 조회합니다.
-- 최대 3회를 사용한 요청은 `FAILED`로 종료하고 실패 코드를 저장합니다.
-
-### Pizza `RUNNING`
-
-- 정상 처리 제한 시간을 넘긴 요청만 복구 대상으로 판정합니다.
-- 최대 시도 횟수가 남았으면 같은 요청 ID로 다시 전달합니다.
-- 최대 시도 횟수를 사용했으면 `FAILED`로 종료합니다.
-- 애플리케이션 재시작만을 이유로 모든 `RUNNING`을 즉시 재전송하지 않습니다.
-
-Pizza의 구체적인 [`stale job`](#stale-job) 판정 시간은 이슈 #21에서 구현과 복구 테스트를 작성하며 결정합니다. Pickle의 기존 복구 동작은 PR 3에서 테스트로 고정한 뒤 PR 7의 책임 분리 과정에서 유지 여부를 판단합니다.
-
-## 중복과 충돌 메시지
-
-| 상황 | 정책 |
+| 설정 | 기본값 |
 | --- | --- |
-| 동일 request 재수신 | Pickle의 기존 Job으로 수렴하고 완료된 LLM 호출을 반복하지 않음 |
-| 동일 성공 result 재수신 | 기존 `DONE`과 리포트를 유지 |
-| 동일 실패 result 재수신 | 기존 `FAILED`와 실패 정보를 유지 |
-| `DONE` 이후 실패 result 도착 | 기존 `DONE`을 유지하고 충돌을 기록 |
-| `FAILED` 이후 성공 result 도착 | 기존 `FAILED`를 유지하고 충돌을 기록 |
-| 같은 요청의 서로 다른 성공 result | 최초 반영 결과를 유지하고 충돌을 기록 |
+| `RUNNING` stale 기준 | 10분 |
+| recovery 실행 주기 | 30초 |
+| recovery batch 크기 | 10 |
 
-Pizza가 메시지를 삭제할지 재처리할지 판단하는 구체적인 코드 경로는 PR 6에서 구현하고 테스트합니다.
+여러 인스턴스가 같은 요청을 복구하지 않도록 PostgreSQL `FOR UPDATE SKIP LOCKED`를 사용한다. 설정값은 운영 지표를 근거로 조정한다.
 
-## [`DLQ`](#dlq) 정책
+## 실패 정보
 
-- 처리할 수 없는 메시지를 원본 queue에서 무한 반복하지 않고 [`DLQ`](#dlq)로 격리합니다.
-- request와 response 방향의 실패를 구분할 수 있도록 각각의 [`DLQ`](#dlq)를 사용합니다.
-- [`visibility timeout`](#visibility-timeout), [`redrive policy`](#redrive-policy), `maxReceiveCount`와 보존 기간은 PR 9에서 실제 SQS 환경을 구성하며 결정합니다.
-- PR 9에서 중복 전달, 처리 프로세스 종료와 최대 수신 횟수 초과 후 [`DLQ`](#dlq) 이동을 검증합니다.
+Pizza 발행 실패는 기존 `analysis_request.error_message`에 명료한 한국어 이유를 저장한다.
 
-PR 1에서는 [`DLQ`](#dlq) 격리 원칙만 정의하며 모니터링, 수동 재처리와 폐기 절차는 확정하지 않습니다.
+- 일시 오류로 retry를 예약하면 마지막 발행 실패 이유를 저장한다.
+- 영구 오류나 시도 소진은 최종 실패 이유와 `completed_at`을 저장한다.
+- stack trace와 AWS 원문은 DB에 저장하지 않고 로그에 남긴다.
+- 발행 실패 전용 `error_code`는 현재 소비처가 없어 추가하지 않는다.
 
-## 최종 실패
+Pickle 최종 실패의 오류 코드와 Pizza 저장 방식은 [Pickle #6](https://github.com/dawwson/psycho.pickle/issues/6)과 [Pizza #22](https://github.com/dawwson/psycho.pizza/issues/22)에서 구현할 목표이다.
 
-최종 실패는 다음 상황에 확정합니다.
+## 중복과 충돌
 
-- 영구 오류로 판정한 경우
-- Pizza request queue 발행 최대 3회를 사용한 경우
-- Pickle LLM 호출 최대 3회를 사용한 경우
-- 반복되는 빈 응답 또는 결과 validation 실패가 최종 실패 기준에 도달한 경우
-- [`stale job`](#stale-job) 복구 한도를 사용한 경우
+SQS 중복 전달은 정상 상황으로 취급한다.
 
-Pizza에는 `FAILED`, 실패 코드, 실패 이유와 완료 시각을 저장합니다. 발행 실패에 필요한 schema와 오류 형식은 이슈 #21, 결과 소비 실패는 PR 6에서 확정합니다.
-
-## 현재 구현과 목표 정책의 차이
-
-| 항목 | 현재 구현 | 목표 정책과 담당 PR |
+| 상황 | 확정 정책 | 현재 구현 |
 | --- | --- | --- |
-| Pizza request 발행 | 입력 계산 또는 SQS 오류 시 retry 정보 없이 `QUEUED` 유지 | 최대 3회 제한 재시도 — 이슈 #21 |
-| Pizza retry 정보 | 시도 횟수와 다음 시각 없음 | `attempt_count`, `last_attempt_at`, `next_retry_at` 저장 — 이슈 #21 |
-| Pizza 재시작 복구 | `QUEUED`는 다시 발견하지만 `RUNNING` 복구 없음 | [`stale job`](#stale-job)만 복구 — 이슈 #21 |
-| Pickle 중복 request | `external_request_id`로 기존 Job 조회 | 기존 동작을 테스트로 고정 — PR 3 |
-| Pickle LLM 오류 | 제한 재시도 정책이 완결되지 않음 | timeout·429·5xx 분류와 최대 3회 — PR 8 |
-| Pickle 결과 통지 | 재시도 상태와 시도 횟수를 저장 | 기존 동작 고정 및 책임 분리 — PR 3·7 |
-| Pizza 실패 result | nullable `result`를 역직렬화하지 못함 | 최종 실패를 `FAILED`로 반영 — PR 6 |
-| Pizza 중복 result | 두 번째 종료 전이에서 예외 가능 | 동일 결과를 멱등하게 처리 — PR 6 |
-| [`DLQ`](#dlq) | 코드에서 실제 queue 설정을 확인할 수 없음 | 실제 PostgreSQL·SQS 장애 복구 검증 — PR 9 |
+| 동일 request 재수신 | Pickle의 기존 Job으로 수렴 | Pickle이 `external_request_id`로 기존 Job 조회 |
+| 동일 성공 result 재수신 | 기존 `DONE`과 리포트 유지 | 미구현 |
+| 동일 실패 result 재수신 | 기존 `FAILED`와 실패 정보 유지 | 미구현 |
+| 종료 상태와 충돌하는 result | 먼저 확정된 종료 상태 유지, 충돌 기록 | 미구현 |
 
-후속 구현이 완료되기 전에는 목표 정책을 현재 동작으로 간주하지 않습니다.
+Pizza 결과의 멱등 처리는 [Pizza #22](https://github.com/dawwson/psycho.pizza/issues/22)에서 구현한다.
+
+## DLQ
+
+처리할 수 없는 메시지는 원본 queue에서 무한 반복하지 않고 DLQ로 격리한다. request와 response 방향은 서로 다른 DLQ를 사용한다.
+
+`visibility timeout`, `redrive policy`, `maxReceiveCount`, 보존 기간과 수동 처리 절차는 아직 확정되지 않았다. 실제 PostgreSQL·SQS 환경의 장애 복구 검증은 [Pizza #23](https://github.com/dawwson/psycho.pizza/issues/23)에서 수행한다.
+
+## 구현 상태
+
+| 범위 | 상태 | 담당 작업 |
+| --- | --- | --- |
+| Pizza 발행 시도 영속화와 제한 retry | 현재 브랜치에서 구현 | [Pizza #21](https://github.com/dawwson/psycho.pizza/issues/21) |
+| Pizza stale `RUNNING` 복구 | 현재 브랜치에서 구현 | [Pizza #21](https://github.com/dawwson/psycho.pizza/issues/21) |
+| Pickle 작업 처리·복구 동작 고정 | 완료 | [Pickle #1](https://github.com/dawwson/psycho.pickle/issues/1) |
+| Pickle LLM 제한 retry와 최종 실패 통지 | 미구현 | [Pickle #6](https://github.com/dawwson/psycho.pickle/issues/6) |
+| Pizza 실패·중복 result 처리 | 미구현 | [Pizza #22](https://github.com/dawwson/psycho.pizza/issues/22) |
+| 실제 SQS와 DLQ 장애 복구 검증 | 미구현 | [Pizza #23](https://github.com/dawwson/psycho.pizza/issues/23) |
+
+미구현 정책은 담당 작업과 검증이 완료되기 전까지 현재 동작으로 간주하지 않는다.
 
 ## 용어
 
-| 영어 원문 | 의미 |
+| 용어 | 의미 |
 | --- | --- |
-| <a id="stale-job"></a>`stale job` | 정상 처리 제한 시간을 초과했지만 종료 상태로 전환되지 않은 작업 |
-| <a id="visibility-timeout"></a>`visibility timeout` | consumer가 메시지를 처리하는 동안 같은 메시지가 다른 consumer에게 보이지 않도록 숨기는 시간 |
-| <a id="redrive-policy"></a>`redrive policy` | 처리되지 않은 메시지를 다시 전달할 최대 횟수와 한도 초과 시 이동할 DLQ를 지정하는 SQS 정책 |
-| <a id="dlq"></a>`DLQ` | 자동 처리를 중단한 메시지를 격리하는 dead-letter queue |
+| `stale job` | 정상 처리 제한 시간을 넘겼지만 종료되지 않은 작업 |
+| `visibility timeout` | consumer가 처리하는 동안 같은 메시지가 다른 consumer에게 보이지 않는 시간 |
+| `redrive policy` | 수신 한도를 넘긴 메시지를 DLQ로 이동하는 규칙 |
+| `DLQ` | 자동 처리를 중단한 메시지를 격리하는 dead-letter queue |

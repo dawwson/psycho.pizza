@@ -63,6 +63,15 @@ openai:
   api-key: ${OPENAI_API_KEY}
   model: gpt-4.1-mini
 
+analysis:
+  dispatcher:
+    max-attempts: ${ANALYSIS_DISPATCHER_MAX_ATTEMPTS:3}
+    initial-retry-delay: ${ANALYSIS_DISPATCHER_INITIAL_RETRY_DELAY:5s}
+  recovery:
+    batch-size: ${ANALYSIS_RECOVERY_BATCH_SIZE:10}
+    fixed-delay: ${ANALYSIS_RECOVERY_FIXED_DELAY:30s}
+    stale-timeout: ${ANALYSIS_RECOVERY_STALE_TIMEOUT:10m}
+
 server:
   forward-headers-strategy: framework
 

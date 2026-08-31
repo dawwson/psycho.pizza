@@ -7,6 +7,7 @@ import pizza.psycho.sos.analysis.domain.exception.AnalysisErrorCode
 import pizza.psycho.sos.analysis.infrastructure.persistence.AnalysisReportRepository
 import pizza.psycho.sos.analysis.infrastructure.persistence.AnalysisRequestRepository
 import pizza.psycho.sos.common.handler.DomainException
+import java.time.Clock
 import java.util.UUID
 
 /*
@@ -17,6 +18,7 @@ import java.util.UUID
 class AnalysisLifecycleService(
     private val analysisRequestRepository: AnalysisRequestRepository,
     private val analysisReportRepository: AnalysisReportRepository,
+    private val clock: Clock,
 ) {
     @Transactional
     fun complete(
@@ -26,7 +28,7 @@ class AnalysisLifecycleService(
     ) {
         // running -> done
         val analysisRequest = getAnalysisRequestEntity(jobId)
-        analysisRequest.complete(result)
+        analysisRequest.markAsCompleted(clock.instant())
 
         // save report
         val analysisReport =

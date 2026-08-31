@@ -12,21 +12,39 @@ import java.util.UUID
 
 @Repository
 interface AnalysisRequestRepository : JpaRepository<AnalysisRequest, UUID> {
-    fun findAllByStatus(status: AnalysisRequestStatus): List<AnalysisRequest>
-
     @Query(
         value =
             """
             select *
             from analysis_request
             where status = 'QUEUED'
+              and (next_retry_at is null or next_retry_at <= :now)
             order by created_at, id
             limit :batchSize
             for update skip locked
             """,
         nativeQuery = true,
     )
-    fun claimQueued(
+    fun claimDispatchableRequests(
+        @Param("now") now: Instant,
+        @Param("batchSize") batchSize: Int,
+    ): List<AnalysisRequest>
+
+    @Query(
+        value =
+            """
+            select *
+            from analysis_request
+            where status = 'RUNNING'
+              and started_at <= :staleBefore
+            order by started_at, id
+            limit :batchSize
+            for update skip locked
+            """,
+        nativeQuery = true,
+    )
+    fun claimStaleRunningRequests(
+        @Param("staleBefore") staleBefore: Instant,
         @Param("batchSize") batchSize: Int,
     ): List<AnalysisRequest>
 
