@@ -4,6 +4,8 @@ import com.ninjasquad.springmockk.MockkBean
 import io.mockk.every
 import jakarta.persistence.EntityManager
 import org.assertj.core.api.Assertions.assertThat
+import org.assertj.core.api.Assertions.assertThatThrownBy
+import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
@@ -50,11 +52,16 @@ class AnalysisDispatcherIntegrationTests {
     @MockkBean
     private lateinit var clock: Clock
 
+    @BeforeEach
+    fun deleteAnalysisRequests() {
+        analysisRequestRepository.deleteAll()
+    }
+
     @Test
     fun `요청별 transaction에서 발행 성공과 재시도 상태를 각각 저장한다`() {
         every { clock.instant() } returns Instant.parse("2026-08-31T01:00:00Z")
-        val successfulRequest = saveQueuedRequest()
-        val failedRequest = saveQueuedRequest()
+        val successfulRequest = saveQueuedRequest(Instant.parse("2026-08-31T00:59:58Z"))
+        val failedRequest = saveQueuedRequest(Instant.parse("2026-08-31T00:59:59Z"))
         val successfulInput = createInput(successfulRequest)
         val failedInput = createInput(failedRequest)
         every { metricService.buildInput(successfulRequest.workspaceId, successfulRequest.targetId) } returns successfulInput
@@ -84,9 +91,40 @@ class AnalysisDispatcherIntegrationTests {
         assertThat(foundFailedRequest.errorMessage).isEqualTo("SQS 분석 요청 메시지 전송이 일시적으로 실패했습니다.")
     }
 
-    private fun saveQueuedRequest(): AnalysisRequest =
+    @Test
+    fun `후속 요청 transaction이 rollback되어도 앞서 발행한 요청 상태는 유지한다`() {
+        every { clock.instant() } returns Instant.parse("2026-08-31T01:00:00Z")
+        val successfulRequest = saveQueuedRequest(Instant.parse("2026-08-31T00:59:58Z"))
+        val rolledBackRequest = saveQueuedRequest(Instant.parse("2026-08-31T00:59:59Z"))
+        val successfulInput = createInput(successfulRequest)
+        val rolledBackInput = createInput(rolledBackRequest)
+        every { metricService.buildInput(successfulRequest.workspaceId, successfulRequest.targetId) } returns successfulInput
+        every { metricService.buildInput(rolledBackRequest.workspaceId, rolledBackRequest.targetId) } returns rolledBackInput
+        every {
+            analysisRequestPublisher.publish(successfulRequest.workspaceId, successfulRequest.requiredId, successfulInput)
+        } returns AnalysisRequestPublishResult.Published
+        every {
+            analysisRequestPublisher.publish(rolledBackRequest.workspaceId, rolledBackRequest.requiredId, rolledBackInput)
+        } throws IllegalStateException("예상하지 못한 발행 오류")
+
+        assertThatThrownBy { dispatcherService.dispatchBatch(batchSize = 2) }
+            .isInstanceOf(IllegalStateException::class.java)
+            .hasMessage("예상하지 못한 발행 오류")
+        entityManager.clear()
+
+        val foundSuccessfulRequest = findRequest(successfulRequest.requiredId)
+        val foundRolledBackRequest = findRequest(rolledBackRequest.requiredId)
+        assertThat(foundSuccessfulRequest.status).isEqualTo(AnalysisRequestStatus.RUNNING)
+        assertThat(foundSuccessfulRequest.attemptCount).isEqualTo(1)
+        assertThat(foundRolledBackRequest.status).isEqualTo(AnalysisRequestStatus.QUEUED)
+        assertThat(foundRolledBackRequest.attemptCount).isZero()
+    }
+
+    private fun saveQueuedRequest(createdAt: Instant): AnalysisRequest =
         analysisRequestRepository.saveAndFlush(
-            AnalysisRequest.create(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID()),
+            AnalysisRequest
+                .create(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID())
+                .apply { this.createdAt = createdAt },
         )
 
     private fun findRequest(id: UUID): AnalysisRequest = analysisRequestRepository.findById(id).orElseThrow()
