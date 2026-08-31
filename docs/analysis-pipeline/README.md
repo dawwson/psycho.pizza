@@ -15,6 +15,7 @@ Pizza–Pickle 분석 파이프라인은 Pizza가 보유한 스프린트 데이�
 | 어떤 오류를 재시도하고 언제 최종 실패로 처리하는가? | [분석 실패 처리 정책](failure-policy.md) |
 | 왜 Pizza DB를 lifecycle 기준으로 사용하는가? | [ADR 0001](../adr/0001-use-pizza-db-as-analysis-lifecycle-source.md) |
 | 왜 중복 전달을 허용하고 consumer를 멱등하게 만드는가? | [ADR 0002](../adr/0002-handle-analysis-messages-idempotently.md) |
+| 왜 분석 요청을 요청별 transaction으로 발행하는가? | [ADR 0003](../adr/0003-dispatch-analysis-requests-in-individual-transactions.md) |
 
 향후 정책과 운영 절차가 확정되면 다음 문서를 추가합니다.
 
@@ -52,10 +53,12 @@ sequenceDiagram
 
     boxClient->>PizzaAPI: 분석 요청
     PizzaAPI->>PizzaDB: QUEUED 요청과 초기 리포트 저장
-    Dispatcher->>PizzaDB: QUEUED batch 선점
-    Dispatcher->>Dispatcher: 분석 입력 계산
-    Dispatcher->>RequestQueue: request 메시지 발행
-    Dispatcher->>PizzaDB: 전송 성공 후 RUNNING
+    loop 최대 batch 크기
+        Dispatcher->>PizzaDB: 발행 가능한 QUEUED 요청 1개 선점
+        Dispatcher->>Dispatcher: 분석 입력 계산
+        Dispatcher->>RequestQueue: request 메시지 발행
+        Dispatcher->>PizzaDB: 성공, 재시도 또는 실패 상태 저장
+    end
     RequestQueue-->>Pickle: 요청 전달
     Pickle->>PickleDB: Job과 결과 저장
     Pickle->>ResponseQueue: 성공 결과 통지
@@ -63,15 +66,17 @@ sequenceDiagram
     PizzaAPI->>PizzaDB: RUNNING to DONE, 리포트 갱신
 ```
 
-현재 구현의 기준과 제약은 다음과 같습니다.
+현재 구현의 기준과 제약은 다음과 같다.
 
-- Pizza DB의 `QUEUED` 요청이 실행 대기열의 기준입니다.
-- Dispatcher는 제한된 batch를 PostgreSQL `FOR UPDATE SKIP LOCKED`로 선점합니다.
-- Pizza는 SQS 전송에 성공한 요청만 `RUNNING`으로 변경합니다.
-- 입력 생성 또는 SQS 전송에 실패한 요청은 retry 정보 없이 `QUEUED`에 남아 다음 polling에서 다시 발견됩니다.
-- 애플리케이션 시작만을 이유로 `RUNNING` 요청을 `QUEUED`로 되돌리지 않으며 stale 복구는 아직 구현되지 않았습니다.
-- Pizza의 result consumer는 성공 결과를 전제로 하며 최종 실패 payload를 안전하게 처리하지 못합니다.
-- 동일 결과가 반복 전달되면 종료 상태 전이에서 예외가 발생할 수 있습니다.
+- Pizza DB의 `QUEUED` 요청이 실행 대기열의 기준이다.
+- Dispatcher는 PostgreSQL `FOR UPDATE SKIP LOCKED`로 요청을 하나씩 선점하고 요청별 transaction에서 처리한다.
+- Pizza는 SQS 전송에 성공한 요청만 `RUNNING`으로 변경한다.
+- Pizza는 SQS 발행 시도 횟수와 다음 재시도 시각을 저장하고 일시 오류를 최대 3회까지 재시도한다.
+- 입력 생성이나 영구 발행 오류, 재시도 소진은 `FAILED`로 종료한다.
+- 애플리케이션 시작만을 이유로 `RUNNING` 요청을 되돌리지 않고 10분 넘게 정체된 요청만 복구한다.
+- 요청별 transaction은 SQS 발행이 끝날 때까지 선점한 row lock을 유지한다. DB commit과 SQS 발행 사이의 경계 장애 개선은 별도 이슈에서 검토한다.
+- Pizza의 result consumer는 성공 결과를 전제로 하며 최종 실패 payload를 안전하게 처리하지 못한다.
+- 동일 결과가 반복 전달되면 종료 상태 전이에서 예외가 발생할 수 있다.
 
 ## 목표 흐름
 
@@ -105,13 +110,13 @@ sequenceDiagram
 - Pizza DB를 분석 요청 lifecycle의 기준으로 사용합니다.
 - Pizza Dispatcher는 DB에서 처리 가능한 요청을 선점하고 분석 입력을 계산한 뒤 request 메시지를 발행합니다.
 - SQS 전송 성공 후 `RUNNING`으로 변경합니다.
-- 같은 `analysisRequestId`로 제한된 재시도와 [`stale job`](lifecycle.md#stale-job) 복구를 수행합니다.
+- 같은 `analysisRequestId`로 제한된 재시도와 [`stale job`](failure-policy.md#stale-job-복구) 복구를 수행합니다.
 - 성공, 최종 실패와 중복 결과를 Pizza가 안전하게 처리합니다.
 - SQS 중복 전달을 전제로 Pizza와 Pickle consumer를 멱등하게 만듭니다.
 - 부하 테스트에는 fake LLM을 사용하고 실제 OpenAI API는 소규모 품질 평가에만 사용합니다.
 - 대규모 아키텍처 개편보다 분석 파이프라인에 필요한 범위의 변경을 우선합니다.
 
-Pizza request queue 발행의 backoff 원칙은 [실패 처리 정책](failure-policy.md)에서 관리한다. 구체적인 계산식과 설정값은 담당 구현 및 테스트 PR에서 결정한다.
+Pizza request queue 발행의 backoff 계산과 설정값은 [실패 처리 정책](failure-policy.md)에서 관리한다.
 
 ## 문서 동기화
 
@@ -121,17 +126,19 @@ Pizza request queue 발행의 backoff 원칙은 [실패 처리 정책](failure-p
 - 재시도, 복구, 멱등성 또는 DLQ 동작을 변경하면 [실패 처리 정책](failure-policy.md)과 관련 테스트·운영 절차를 함께 검토합니다.
 - 정상 경로뿐 아니라 중복 전달, 순서 역전, 알 수 없는 요청과 잘못된 payload를 문서와 테스트에서 다룹니다.
 
-## 후속 작업 연결
+## GitHub 작업 연결
 
-| 범위 | 담당 작업 |
-| --- | --- |
-| Pizza 현재 lifecycle을 테스트로 고정 | PR 2 |
-| Pickle 중복·통지·복구 동작을 테스트로 고정 | PR 3 |
-| Pizza DB Dispatcher 구현 | 이슈 #20 — 구현 완료 |
-| Pizza 발행 재시도 정보와 `stale job` 복구 구현 | 이슈 #21 |
-| Pizza 결과 실패 계약과 멱등 처리 구현 | PR 6 |
-| Pickle 제출·통지·복구 책임 분리 | PR 7 |
-| Pickle LLM 오류 분류와 제한 재시도 구현 | PR 8 |
-| 실제 PostgreSQL·SQS·DLQ 장애 복구 검증 | PR 9 |
+| 범위 | GitHub 작업 | 상태 |
+| --- | --- | --- |
+| Pizza lifecycle 동작 고정 | [Pizza #2](https://github.com/dawwson/psycho.pizza/issues/2) | 완료 |
+| Pickle 작업 처리·복구 동작 고정 | [Pickle #1](https://github.com/dawwson/psycho.pickle/issues/1) | 완료 |
+| Pizza DB Dispatcher 구현 | [Pizza #20](https://github.com/dawwson/psycho.pizza/issues/20) | 완료 |
+| Pizza 발행 retry와 `stale job` 복구 | [Pizza #21](https://github.com/dawwson/psycho.pizza/issues/21) | 현재 브랜치에서 구현, 이슈 OPEN |
+| Pizza 결과 실패 계약과 멱등 처리 | [Pizza #22](https://github.com/dawwson/psycho.pizza/issues/22) | OPEN |
+| Pizza–Pickle 메시지 contract 검증 | [Pizza #18](https://github.com/dawwson/psycho.pizza/issues/18) | OPEN |
+| Pickle 제출·통지·복구 책임 분리 | [Pickle #5](https://github.com/dawwson/psycho.pickle/issues/5) | OPEN |
+| Pickle LLM 오류 분류와 제한 재시도 | [Pickle #6](https://github.com/dawwson/psycho.pickle/issues/6) | OPEN |
+| PostgreSQL·SQS·DLQ 장애 복구 검증 | [Pizza #23](https://github.com/dawwson/psycho.pizza/issues/23) | OPEN |
+| Dispatcher의 DB transaction과 SQS 발행 경계 검토 | [Pizza #32](https://github.com/dawwson/psycho.pizza/issues/32) | OPEN |
 
-후속 PR이 완료되기 전에는 목표 흐름을 현재 동작으로 간주하지 않습니다.
+Pickle 최종 실패와 Pizza result consumer의 멱등 처리 등 후속 작업은 구현이 완료되기 전까지 현재 동작으로 간주하지 않는다.

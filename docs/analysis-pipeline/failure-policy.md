@@ -4,9 +4,9 @@
 
 이 문서는 Pizza–Pickle 분석 파이프라인에서 오류를 분류하고 재시도, [`stale job`](#stale-job) 복구, 중복 메시지와 최종 실패를 처리하는 기준을 정의합니다.
 
-PR 1에서는 후속 구현이 따라야 할 정책만 확정했다. Pizza request queue 발행의 시도 횟수와 backoff 세부 값, timeout, Pickle 결과 통지 횟수와 SQS `maxReceiveCount`는 해당 구현과 테스트 PR에서 결정한다.
+Pizza request queue 발행에는 이 문서의 시도 횟수, backoff와 stale 복구 정책이 구현되어 있다. Pickle LLM retry, 결과 통지 횟수와 SQS `maxReceiveCount`는 후속 작업에서 구현과 테스트를 작성하며 확정한다.
 
-중복 전달을 정상 상황으로 다루는 결정은 [ADR 0002](../adr/0002-handle-analysis-messages-idempotently.md), 메시지 필드와 성공·실패 조합은 [Pizza–Pickle 메시지 계약](message-contract.md)에 기록합니다.
+요청별 transaction으로 발행하는 결정은 [ADR 0003](../adr/0003-dispatch-analysis-requests-in-individual-transactions.md), 중복 전달을 정상 상황으로 다루는 결정은 [ADR 0002](../adr/0002-handle-analysis-messages-idempotently.md)에 기록한다. 메시지 필드와 성공·실패 조합은 [Pizza–Pickle 메시지 계약](message-contract.md)에서 관리한다.
 
 ## 기본 원칙
 
@@ -50,9 +50,9 @@ PR 1에서는 후속 구현이 따라야 할 정책만 확정했다. Pizza reque
 
 ## 단계별 최대 시도 횟수
 
-| 단계 | PR 1에서 확정하는 정책 | 세부 결정 시점 |
+| 단계 | 정책 | 구현 상태 |
 | --- | --- | --- |
-| Pizza request queue 발행 | 최대 3회 | 이슈 #21에서 backoff와 오류별 처리 구현 |
+| Pizza request queue 발행 | 최대 3회 | 이슈 #21에서 구현 |
 | Pickle LLM 호출 | 최대 3회 | PR 8에서 timeout, 429, 5xx와 validation 처리 구현 |
 | Pickle 결과 통지 | 제한된 재시도 필요 | PR 3에서 현재 동작을 테스트로 고정하고 PR 7에서 책임 분리 |
 | Pizza response 메시지 처리 | 반복 실패 메시지를 [`DLQ`](#dlq)로 격리 | PR 6에서 삭제·재처리 판정, PR 9에서 실제 SQS 검증 |
@@ -143,13 +143,13 @@ PR 1에서는 [`DLQ`](#dlq) 격리 원칙만 정의하며 모니터링, 수동 �
 
 Pizza 발행 실패와 Pickle 최종 실패에서 저장하는 정보는 [실패 정보 저장 범위](#실패-정보-저장-범위)를 따른다.
 
-## 현재 구현과 목표 정책의 차이
+## 구현 상태
 
-| 항목 | 현재 구현 | 목표 정책과 담당 PR |
+| 항목 | 구현 상태 | 남은 작업 |
 | --- | --- | --- |
-| Pizza request 발행 | 입력 계산 또는 SQS 오류 시 retry 정보 없이 `QUEUED` 유지 | 최대 3회 제한 재시도 — 이슈 #21 |
-| Pizza retry 정보 | 시도 횟수와 다음 시각 없음 | `attempt_count`, `last_attempt_at`, `next_retry_at` 저장 — 이슈 #21 |
-| Pizza 재시작 복구 | `QUEUED`는 다시 발견하지만 `RUNNING` 복구 없음 | [`stale job`](#stale-job)만 복구 — 이슈 #21 |
+| Pizza request 발행 | 요청별 transaction에서 입력 생성과 SQS 발행을 수행하고, 오류 유형과 시도 횟수에 따라 재시도 또는 `FAILED` 처리 | 운영 지표를 근거로 설정값 조정 |
+| Pizza retry 정보 | `attempt_count`, `last_attempt_at`, `next_retry_at` 저장 | 없음 |
+| Pizza stale 복구 | 10분 넘게 `RUNNING`인 요청만 선점해 재발행을 예약하거나 `FAILED` 처리 | 운영 지표를 근거로 stale 기준 조정 |
 | Pickle 중복 request | `external_request_id`로 기존 Job 조회 | 기존 동작을 테스트로 고정 — PR 3 |
 | Pickle LLM 오류 | 제한 재시도 정책이 완결되지 않음 | timeout·429·5xx 분류와 최대 3회 — PR 8 |
 | Pickle 결과 통지 | 재시도 상태와 시도 횟수를 저장 | 기존 동작 고정 및 책임 분리 — PR 3·7 |
@@ -157,7 +157,7 @@ Pizza 발행 실패와 Pickle 최종 실패에서 저장하는 정보는 [실패
 | Pizza 중복 result | 두 번째 종료 전이에서 예외 가능 | 동일 결과를 멱등하게 처리 — PR 6 |
 | [`DLQ`](#dlq) | 코드에서 실제 queue 설정을 확인할 수 없음 | 실제 PostgreSQL·SQS 장애 복구 검증 — PR 9 |
 
-후속 구현이 완료되기 전에는 목표 정책을 현재 동작으로 간주하지 않습니다.
+Pickle retry, Pizza result consumer와 DLQ에 관한 목표 정책은 담당 후속 작업이 완료되기 전까지 현재 동작으로 간주하지 않는다.
 
 ## 용어
 
