@@ -2,7 +2,8 @@ package pizza.psycho.sos.analysis.application.service
 
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
-import pizza.psycho.sos.analysis.application.port.RequestQueueProducer
+import pizza.psycho.sos.analysis.application.port.AnalysisRequestPublishResult
+import pizza.psycho.sos.analysis.application.port.AnalysisRequestPublisher
 import pizza.psycho.sos.analysis.domain.entity.AnalysisRequest
 import pizza.psycho.sos.analysis.infrastructure.persistence.AnalysisRequestRepository
 import pizza.psycho.sos.common.support.log.loggerDelegate
@@ -11,7 +12,7 @@ import pizza.psycho.sos.common.support.log.loggerDelegate
 class AnalysisDispatcherService(
     private val analysisRequestRepository: AnalysisRequestRepository,
     private val sprintAnalysisMetricService: SprintAnalysisMetricService,
-    private val requestQueueProducer: RequestQueueProducer,
+    private val analysisRequestPublisher: AnalysisRequestPublisher,
 ) {
     private val log by loggerDelegate()
 
@@ -41,11 +42,17 @@ class AnalysisDispatcherService(
                 sprintId = analysisRequest.targetId,
             )
 
-        requestQueueProducer.send(
-            workspaceId = analysisRequest.workspaceId,
-            analysisRequestId = analysisRequestId,
-            payload = input,
-        )
+        when (
+            val result =
+                analysisRequestPublisher.publish(
+                    workspaceId = analysisRequest.workspaceId,
+                    analysisRequestId = analysisRequestId,
+                    payload = input,
+                )
+        ) {
+            AnalysisRequestPublishResult.Published -> Unit
+            is AnalysisRequestPublishResult.Failed -> throw result.cause
+        }
 
         // RUNNING은 처리 시작이 아니라 Pickle에 전달되어 결과를 기다리는 상태를 뜻한다.
         analysisRequest.markAsRunning()

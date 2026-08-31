@@ -1,13 +1,13 @@
 package pizza.psycho.sos.analysis.application.service
 
 import io.mockk.every
-import io.mockk.justRun
 import io.mockk.mockk
 import io.mockk.verify
 import io.mockk.verifySequence
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
-import pizza.psycho.sos.analysis.application.port.RequestQueueProducer
+import pizza.psycho.sos.analysis.application.port.AnalysisRequestPublishResult
+import pizza.psycho.sos.analysis.application.port.AnalysisRequestPublisher
 import pizza.psycho.sos.analysis.application.service.dto.SprintAnalysisInput
 import pizza.psycho.sos.analysis.domain.entity.AnalysisRequest
 import pizza.psycho.sos.analysis.domain.vo.AnalysisRequestStatus
@@ -26,8 +26,12 @@ class AnalysisDispatcherServiceTests {
         every { fixture.repository.claimQueued(2) } returns listOf(firstRequest, secondRequest)
         every { fixture.metricService.buildInput(firstRequest.workspaceId, firstRequest.targetId) } returns firstInput
         every { fixture.metricService.buildInput(secondRequest.workspaceId, secondRequest.targetId) } returns secondInput
-        justRun { fixture.requestQueueProducer.send(firstRequest.workspaceId, firstRequest.requiredId, firstInput) }
-        justRun { fixture.requestQueueProducer.send(secondRequest.workspaceId, secondRequest.requiredId, secondInput) }
+        every {
+            fixture.analysisRequestPublisher.publish(firstRequest.workspaceId, firstRequest.requiredId, firstInput)
+        } returns AnalysisRequestPublishResult.Published
+        every {
+            fixture.analysisRequestPublisher.publish(secondRequest.workspaceId, secondRequest.requiredId, secondInput)
+        } returns AnalysisRequestPublishResult.Published
 
         fixture.service.dispatchBatch(batchSize = 2)
 
@@ -36,9 +40,9 @@ class AnalysisDispatcherServiceTests {
         verifySequence {
             fixture.repository.claimQueued(2)
             fixture.metricService.buildInput(firstRequest.workspaceId, firstRequest.targetId)
-            fixture.requestQueueProducer.send(firstRequest.workspaceId, firstRequest.requiredId, firstInput)
+            fixture.analysisRequestPublisher.publish(firstRequest.workspaceId, firstRequest.requiredId, firstInput)
             fixture.metricService.buildInput(secondRequest.workspaceId, secondRequest.targetId)
-            fixture.requestQueueProducer.send(secondRequest.workspaceId, secondRequest.requiredId, secondInput)
+            fixture.analysisRequestPublisher.publish(secondRequest.workspaceId, secondRequest.requiredId, secondInput)
         }
     }
 
@@ -52,19 +56,28 @@ class AnalysisDispatcherServiceTests {
         every { fixture.repository.claimQueued(2) } returns listOf(failedRequest, successfulRequest)
         every { fixture.metricService.buildInput(failedRequest.workspaceId, failedRequest.targetId) } returns failedInput
         every { fixture.metricService.buildInput(successfulRequest.workspaceId, successfulRequest.targetId) } returns successfulInput
+        val publishException = IllegalStateException("SQS 전송 실패")
         every {
-            fixture.requestQueueProducer.send(failedRequest.workspaceId, failedRequest.requiredId, failedInput)
-        } throws IllegalStateException("SQS 전송 실패")
-        justRun {
-            fixture.requestQueueProducer.send(successfulRequest.workspaceId, successfulRequest.requiredId, successfulInput)
-        }
+            fixture.analysisRequestPublisher.publish(failedRequest.workspaceId, failedRequest.requiredId, failedInput)
+        } returns
+            AnalysisRequestPublishResult.Failed.Retryable(
+                message = "SQS 분석 요청 메시지 전송이 일시적으로 실패했습니다.",
+                cause = publishException,
+            )
+        every {
+            fixture.analysisRequestPublisher.publish(successfulRequest.workspaceId, successfulRequest.requiredId, successfulInput)
+        } returns AnalysisRequestPublishResult.Published
 
         fixture.service.dispatchBatch(batchSize = 2)
 
         assertThat(failedRequest.status).isEqualTo(AnalysisRequestStatus.QUEUED)
         assertThat(successfulRequest.status).isEqualTo(AnalysisRequestStatus.RUNNING)
         verify(exactly = 1) {
-            fixture.requestQueueProducer.send(successfulRequest.workspaceId, successfulRequest.requiredId, successfulInput)
+            fixture.analysisRequestPublisher.publish(
+                successfulRequest.workspaceId,
+                successfulRequest.requiredId,
+                successfulInput,
+            )
         }
     }
 
@@ -76,15 +89,15 @@ class AnalysisDispatcherServiceTests {
         fixture.service.dispatchBatch(batchSize = 10)
 
         verify(exactly = 0) { fixture.metricService.buildInput(any(), any()) }
-        verify(exactly = 0) { fixture.requestQueueProducer.send(any(), any(), any()) }
+        verify(exactly = 0) { fixture.analysisRequestPublisher.publish(any(), any(), any()) }
     }
 }
 
 private class DispatcherFixture {
     val repository = mockk<AnalysisRequestRepository>()
     val metricService = mockk<SprintAnalysisMetricService>()
-    val requestQueueProducer = mockk<RequestQueueProducer>()
-    val service = AnalysisDispatcherService(repository, metricService, requestQueueProducer)
+    val analysisRequestPublisher = mockk<AnalysisRequestPublisher>()
+    val service = AnalysisDispatcherService(repository, metricService, analysisRequestPublisher)
 }
 
 private val AnalysisRequest.requiredId: UUID

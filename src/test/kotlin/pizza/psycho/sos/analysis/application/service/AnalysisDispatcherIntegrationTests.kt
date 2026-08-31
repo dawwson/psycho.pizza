@@ -2,7 +2,6 @@ package pizza.psycho.sos.analysis.application.service
 
 import com.ninjasquad.springmockk.MockkBean
 import io.mockk.every
-import io.mockk.justRun
 import jakarta.persistence.EntityManager
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Tag
@@ -12,7 +11,8 @@ import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest
 import org.springframework.context.annotation.Import
 import org.springframework.data.jpa.repository.config.EnableJpaAuditing
 import org.springframework.test.context.ActiveProfiles
-import pizza.psycho.sos.analysis.application.port.RequestQueueProducer
+import pizza.psycho.sos.analysis.application.port.AnalysisRequestPublishResult
+import pizza.psycho.sos.analysis.application.port.AnalysisRequestPublisher
 import pizza.psycho.sos.analysis.application.service.dto.SprintAnalysisInput
 import pizza.psycho.sos.analysis.domain.entity.AnalysisRequest
 import pizza.psycho.sos.analysis.domain.vo.AnalysisRequestStatus
@@ -38,7 +38,7 @@ class AnalysisDispatcherIntegrationTests {
     private lateinit var metricService: SprintAnalysisMetricService
 
     @MockkBean
-    private lateinit var requestQueueProducer: RequestQueueProducer
+    private lateinit var analysisRequestPublisher: AnalysisRequestPublisher
 
     @Test
     fun `SQS 전송에 성공한 요청만 RUNNING으로 저장한다`() {
@@ -48,10 +48,17 @@ class AnalysisDispatcherIntegrationTests {
         val failedInput = createInput(failedRequest)
         every { metricService.buildInput(successfulRequest.workspaceId, successfulRequest.targetId) } returns successfulInput
         every { metricService.buildInput(failedRequest.workspaceId, failedRequest.targetId) } returns failedInput
-        justRun { requestQueueProducer.send(successfulRequest.workspaceId, successfulRequest.requiredId, successfulInput) }
         every {
-            requestQueueProducer.send(failedRequest.workspaceId, failedRequest.requiredId, failedInput)
-        } throws IllegalStateException("SQS 전송 실패")
+            analysisRequestPublisher.publish(successfulRequest.workspaceId, successfulRequest.requiredId, successfulInput)
+        } returns AnalysisRequestPublishResult.Published
+        val publishException = IllegalStateException("SQS 전송 실패")
+        every {
+            analysisRequestPublisher.publish(failedRequest.workspaceId, failedRequest.requiredId, failedInput)
+        } returns
+            AnalysisRequestPublishResult.Failed.Retryable(
+                message = "SQS 분석 요청 메시지 전송이 일시적으로 실패했습니다.",
+                cause = publishException,
+            )
 
         dispatcherService.dispatchBatch(batchSize = 2)
         entityManager.flush()
