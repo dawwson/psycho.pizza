@@ -110,6 +110,79 @@ class AnalysisRequestRepositoryPostgresTests : PostgresTestContainerSupport() {
     }
 
     @Test
+    fun `기준 시각을 지난 RUNNING 요청만 정체 요청으로 선점한다`() {
+        val now = Instant.parse("2026-08-31T01:00:00Z")
+        val staleRequest = saveRunningRequest()
+        val freshRequest = saveRunningRequest()
+        updateStartedAt(staleRequest.requiredId, now.minusSeconds(601))
+        updateStartedAt(freshRequest.requiredId, now.minusSeconds(599))
+
+        val claimed =
+            TransactionTemplate(transactionManager)
+                .execute {
+                    analysisRequestRepository.claimStaleRunningRequests(
+                        staleBefore = now.minusSeconds(600),
+                        batchSize = 10,
+                    )
+                }.orEmpty()
+
+        assertThat(claimed.map { it.id }).containsExactly(staleRequest.requiredId)
+    }
+
+    @Test
+    fun `두 transaction이 동시에 정체 요청을 선점하면 같은 요청을 반환하지 않는다`() {
+        val now = Instant.parse("2026-08-31T01:00:00Z")
+        val requests = List(2) { saveRunningRequest() }
+        requests.forEach { updateStartedAt(it.requiredId, now.minusSeconds(601)) }
+        val executor = Executors.newFixedThreadPool(2)
+        val firstClaimed = CountDownLatch(1)
+        val releaseFirstClaim = CountDownLatch(1)
+        val transactionTemplate = TransactionTemplate(transactionManager)
+
+        try {
+            val firstResult =
+                executor.submit<List<UUID>> {
+                    transactionTemplate
+                        .execute {
+                            val ids =
+                                analysisRequestRepository
+                                    .claimStaleRunningRequests(now.minusSeconds(600), batchSize = 1)
+                                    .map { it.id!! }
+                            firstClaimed.countDown()
+                            check(releaseFirstClaim.await(5, TimeUnit.SECONDS))
+                            ids
+                        }.orEmpty()
+                }
+
+            assertThat(firstClaimed.await(5, TimeUnit.SECONDS)).isTrue()
+
+            val secondResult =
+                executor.submit<List<UUID>> {
+                    transactionTemplate
+                        .execute {
+                            analysisRequestRepository
+                                .claimStaleRunningRequests(now.minusSeconds(600), batchSize = 1)
+                                .map { it.id!! }
+                        }.orEmpty()
+                }
+
+            val (firstIds, secondIds) =
+                assertTimeoutPreemptively(Duration.ofSeconds(10)) {
+                    val secondIds = secondResult.get(5, TimeUnit.SECONDS)
+                    releaseFirstClaim.countDown()
+                    firstResult.get(5, TimeUnit.SECONDS) to secondIds
+                }
+
+            assertThat(firstIds).hasSize(1)
+            assertThat(secondIds).hasSize(1)
+            assertThat(firstIds).doesNotContainAnyElementsOf(secondIds)
+        } finally {
+            releaseFirstClaim.countDown()
+            executor.shutdownNow()
+        }
+    }
+
+    @Test
     fun `두 transaction이 동시에 선점하면 같은 요청을 반환하지 않는다`() {
         /*
          * TX1: 첫 번째 QUEUED row를 선점하고 lock 획득
@@ -199,4 +272,29 @@ class AnalysisRequestRepositoryPostgresTests : PostgresTestContainerSupport() {
             sprintId = UUID.randomUUID(),
             memberId = UUID.randomUUID(),
         )
+
+    private fun saveRunningRequest(): AnalysisRequest =
+        analysisRequestRepository.saveAndFlush(
+            newAnalysisRequest().also {
+                it.recordDispatchAttempt(Instant.now())
+                it.markAsRunning()
+            },
+        )
+
+    private fun updateStartedAt(
+        analysisRequestId: UUID,
+        startedAt: Instant,
+    ) {
+        TransactionTemplate(transactionManager).executeWithoutResult {
+            entityManager
+                .createNativeQuery("update analysis_request set started_at = :startedAt where id = :id")
+                .setParameter("startedAt", startedAt)
+                .setParameter("id", analysisRequestId)
+                .executeUpdate()
+        }
+        entityManager.clear()
+    }
 }
+
+private val AnalysisRequest.requiredId: UUID
+    get() = requireNotNull(id)

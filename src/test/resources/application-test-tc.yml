@@ -36,6 +36,8 @@ openai:
 analysis:
   dispatcher:
     enabled: false
+  recovery:
+    enabled: false
 
 sqs:
   request-queue-name: test-queue-1

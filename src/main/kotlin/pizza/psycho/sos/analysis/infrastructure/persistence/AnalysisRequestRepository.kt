@@ -30,6 +30,24 @@ interface AnalysisRequestRepository : JpaRepository<AnalysisRequest, UUID> {
         @Param("batchSize") batchSize: Int,
     ): List<AnalysisRequest>
 
+    @Query(
+        value =
+            """
+            select *
+            from analysis_request
+            where status = 'RUNNING'
+              and started_at <= :staleBefore
+            order by started_at, id
+            limit :batchSize
+            for update skip locked
+            """,
+        nativeQuery = true,
+    )
+    fun claimStaleRunningRequests(
+        @Param("staleBefore") staleBefore: Instant,
+        @Param("batchSize") batchSize: Int,
+    ): List<AnalysisRequest>
+
     fun findByIdAndWorkspaceId(
         id: UUID,
         workspaceId: UUID,

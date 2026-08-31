@@ -126,10 +126,7 @@ class AnalysisRequest(
         completedAt = Instant.now()
     }
 
-    /**
-     * QUEUED / RUNNING -> FAILED
-     * - completedAt 기록 + errorMessage 저장
-     */
+    // QUEUED / RUNNING -> FAILED
     fun markAsFailed(reason: String) {
         if (status != AnalysisRequestStatus.QUEUED && status != AnalysisRequestStatus.RUNNING) {
             throw DomainException(
@@ -143,11 +140,7 @@ class AnalysisRequest(
         nextRetryAt = null
     }
 
-    /*
-     * RUNNING -> QUEUED
-     * - 작업 진행 중 서버 종료된 경우 QUEUED로 복구
-     * - startedAt 초기화
-     */
+    // RUNNING -> QUEUED
     fun markAsQueuedForRetry(retryAt: Instant) {
         if (status != AnalysisRequestStatus.RUNNING) {
             throw DomainException(

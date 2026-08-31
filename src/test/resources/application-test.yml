@@ -40,6 +40,8 @@ openai:
 analysis:
   dispatcher:
     enabled: false
+  recovery:
+    enabled: false
 
 sqs:
   request-queue-name: ${REQUEST_QUEUE_NAME:psycho-sqs-request-prod}
