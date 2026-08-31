@@ -38,11 +38,16 @@ class AnalysisRequestQueryService(
         )
     }
 
-    fun getAnalysisRequestReport(analysisRequestId: UUID): AnalysisResponse.GetAnalysisRequestReport.Response {
+    fun getAnalysisRequestReport(
+        workspaceId: UUID,
+        analysisRequestId: UUID,
+    ): AnalysisResponse.GetAnalysisRequestReport.Response {
         val request =
             analysisRequestRepository
-                .findById(analysisRequestId)
-                .orElseThrow {
+                .findByIdAndWorkspaceId(
+                    id = analysisRequestId,
+                    workspaceId = workspaceId,
+                ).orElseThrow {
                     DomainException(AnalysisErrorCode.ANALYSIS_REQUEST_NOT_FOUND)
                 }
 

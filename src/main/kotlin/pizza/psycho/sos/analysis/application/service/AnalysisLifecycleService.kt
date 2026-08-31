@@ -1,13 +1,13 @@
 package pizza.psycho.sos.analysis.application.service
 
 import org.springframework.stereotype.Service
-import org.springframework.transaction.annotation.Propagation
 import org.springframework.transaction.annotation.Transactional
 import pizza.psycho.sos.analysis.domain.entity.AnalysisRequest
 import pizza.psycho.sos.analysis.domain.exception.AnalysisErrorCode
 import pizza.psycho.sos.analysis.infrastructure.persistence.AnalysisReportRepository
 import pizza.psycho.sos.analysis.infrastructure.persistence.AnalysisRequestRepository
 import pizza.psycho.sos.common.handler.DomainException
+import java.time.Clock
 import java.util.UUID
 
 /*
@@ -18,22 +18,8 @@ import java.util.UUID
 class AnalysisLifecycleService(
     private val analysisRequestRepository: AnalysisRequestRepository,
     private val analysisReportRepository: AnalysisReportRepository,
+    private val clock: Clock,
 ) {
-    @Transactional
-    fun markRunning(id: UUID) {
-        val analysisRequest = getAnalysisRequestEntity(id)
-        analysisRequest.markAsRunning()
-    }
-
-    @Transactional(propagation = Propagation.REQUIRES_NEW) // NOTE: 기존 롤백과 무관하게 무조건 커밋됨
-    fun fail(
-        id: UUID,
-        errorMessage: String,
-    ) {
-        val analysisRequest = getAnalysisRequestEntity(id)
-        analysisRequest.markAsFailed(errorMessage)
-    }
-
     @Transactional
     fun complete(
         jobId: UUID,
@@ -42,7 +28,7 @@ class AnalysisLifecycleService(
     ) {
         // running -> done
         val analysisRequest = getAnalysisRequestEntity(jobId)
-        analysisRequest.complete(result)
+        analysisRequest.markAsCompleted(clock.instant())
 
         // save report
         val analysisReport =

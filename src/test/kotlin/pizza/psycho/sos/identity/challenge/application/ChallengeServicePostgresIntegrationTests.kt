@@ -103,7 +103,16 @@ class ChallengeServicePostgresIntegrationTests : PostgresTestContainerSupport() 
                 ChallengeStatus.PENDING,
             )
         assertEquals(newChallengeId, requireNotNull(pending).id)
-        assertEquals(pending.expiresAt, (result as RequestChallengeResult.Success).expiresAt)
+        val expiresAtDifference =
+            Duration
+                .between(
+                    pending.expiresAt,
+                    (result as RequestChallengeResult.Success).expiresAt,
+                ).abs()
+        assertTrue(
+            expiresAtDifference <= Duration.ofNanos(1_000),
+            "Persisted expiresAt must differ from the result by at most 1 microsecond: $expiresAtDifference",
+        )
     }
 
     @Test
