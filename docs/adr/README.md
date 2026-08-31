@@ -25,3 +25,4 @@ ADR은 여러 대안 중 선택했고 후속 구현에 장기적인 영향을 �
 
 - [0001. Pizza DB를 분석 lifecycle의 source of truth로 사용](0001-use-pizza-db-as-analysis-lifecycle-source.md) — Accepted
 - [0002. 분석 메시지를 멱등하게 처리](0002-handle-analysis-messages-idempotently.md) — Accepted
+- [0003. 분석 요청을 요청 단위 transaction으로 발행](0003-dispatch-analysis-requests-in-individual-transactions.md) — Accepted
