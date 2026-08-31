@@ -48,7 +48,7 @@ class AnalysisRequestRepositoryPostgresTests : PostgresTestContainerSupport() {
         val request =
             newAnalysisRequest().apply {
                 recordDispatchAttempt(attemptedAt)
-                scheduleRetry(retryAt)
+                scheduleRetry(retryAt, "일시적인 발행 실패")
             }
 
         val saved = analysisRequestRepository.saveAndFlush(request)
@@ -89,12 +89,12 @@ class AnalysisRequestRepositoryPostgresTests : PostgresTestContainerSupport() {
         val retryableRequest =
             newAnalysisRequest().apply {
                 recordDispatchAttempt(firstAttempt)
-                scheduleRetry(now)
+                scheduleRetry(now, "일시적인 발행 실패")
             }
         val waitingRequest =
             newAnalysisRequest().apply {
                 recordDispatchAttempt(firstAttempt)
-                scheduleRetry(now.plusSeconds(1))
+                scheduleRetry(now.plusSeconds(1), "일시적인 발행 실패")
             }
         val newRequest = newAnalysisRequest()
         analysisRequestRepository.saveAllAndFlush(listOf(retryableRequest, waitingRequest, newRequest))

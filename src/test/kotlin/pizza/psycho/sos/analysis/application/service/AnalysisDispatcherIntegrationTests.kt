@@ -11,9 +11,13 @@ import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest
 import org.springframework.context.annotation.Import
 import org.springframework.data.jpa.repository.config.EnableJpaAuditing
 import org.springframework.test.context.ActiveProfiles
+import org.springframework.transaction.annotation.Propagation
+import org.springframework.transaction.annotation.Transactional
+import pizza.psycho.sos.analysis.application.policy.AnalysisDispatchPolicy
 import pizza.psycho.sos.analysis.application.port.AnalysisRequestPublishResult
 import pizza.psycho.sos.analysis.application.port.AnalysisRequestPublisher
 import pizza.psycho.sos.analysis.application.service.dto.SprintAnalysisInput
+import pizza.psycho.sos.analysis.config.AnalysisDispatchConfig
 import pizza.psycho.sos.analysis.domain.entity.AnalysisRequest
 import pizza.psycho.sos.analysis.domain.vo.AnalysisRequestStatus
 import pizza.psycho.sos.analysis.infrastructure.persistence.AnalysisRequestRepository
@@ -25,7 +29,8 @@ import java.util.UUID
 @DataJpaTest
 @EnableJpaAuditing
 @ActiveProfiles("test")
-@Import(AnalysisDispatcherService::class)
+@Import(AnalysisDispatcherService::class, AnalysisDispatchPolicy::class, AnalysisDispatchConfig::class)
+@Transactional(propagation = Propagation.NOT_SUPPORTED)
 class AnalysisDispatcherIntegrationTests {
     @Autowired
     private lateinit var dispatcherService: AnalysisDispatcherService
@@ -46,7 +51,7 @@ class AnalysisDispatcherIntegrationTests {
     private lateinit var clock: Clock
 
     @Test
-    fun `SQS 전송에 성공한 요청만 RUNNING으로 저장한다`() {
+    fun `요청별 transaction에서 발행 성공과 재시도 상태를 각각 저장한다`() {
         every { clock.instant() } returns Instant.parse("2026-08-31T01:00:00Z")
         val successfulRequest = saveQueuedRequest()
         val failedRequest = saveQueuedRequest()
@@ -67,11 +72,16 @@ class AnalysisDispatcherIntegrationTests {
             )
 
         dispatcherService.dispatchBatch(batchSize = 2)
-        entityManager.flush()
         entityManager.clear()
 
-        assertThat(findRequest(successfulRequest.requiredId).status).isEqualTo(AnalysisRequestStatus.RUNNING)
-        assertThat(findRequest(failedRequest.requiredId).status).isEqualTo(AnalysisRequestStatus.QUEUED)
+        val foundSuccessfulRequest = findRequest(successfulRequest.requiredId)
+        val foundFailedRequest = findRequest(failedRequest.requiredId)
+        assertThat(foundSuccessfulRequest.status).isEqualTo(AnalysisRequestStatus.RUNNING)
+        assertThat(foundSuccessfulRequest.attemptCount).isEqualTo(1)
+        assertThat(foundFailedRequest.status).isEqualTo(AnalysisRequestStatus.QUEUED)
+        assertThat(foundFailedRequest.attemptCount).isEqualTo(1)
+        assertThat(foundFailedRequest.nextRetryAt).isEqualTo(Instant.parse("2026-08-31T01:00:05Z"))
+        assertThat(foundFailedRequest.errorMessage).isEqualTo("SQS 분석 요청 메시지 전송이 일시적으로 실패했습니다.")
     }
 
     private fun saveQueuedRequest(): AnalysisRequest =

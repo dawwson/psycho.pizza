@@ -73,7 +73,10 @@ class AnalysisRequest(
     /**
      * QUEUED 상태의 다음 발행 가능 시각을 기록한다.
      */
-    fun scheduleRetry(retryAt: Instant) {
+    fun scheduleRetry(
+        retryAt: Instant,
+        reason: String,
+    ) {
         if (status != AnalysisRequestStatus.QUEUED) {
             throw DomainException(
                 AnalysisErrorCode.INVALID_ANALYSIS_STATE,
@@ -81,6 +84,7 @@ class AnalysisRequest(
             )
         }
         nextRetryAt = retryAt
+        errorMessage = reason
     }
 
     // QUEUED -> RUNNING

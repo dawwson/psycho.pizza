@@ -18,7 +18,7 @@ class AnalysisDispatcherRunner(
      */
     @Scheduled(fixedDelayString = "\${analysis.dispatcher.fixed-delay-millis:1000}")
     fun dispatch() {
-        // 한 번에 선점하는 수를 제한해 하나의 transaction이 과도하게 많은 row lock을 잡지 않게 한다.
+        // 한 번의 실행에서 처리할 요청 수를 제한하며 각 요청은 별도 transaction에서 선점하고 발행한다.
         analysisDispatcherService.dispatchBatch(DEFAULT_BATCH_SIZE)
     }
 

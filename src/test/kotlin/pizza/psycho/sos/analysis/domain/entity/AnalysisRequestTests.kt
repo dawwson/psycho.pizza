@@ -69,7 +69,7 @@ class AnalysisRequestTests {
             val secondAttemptAt = Instant.parse("2026-08-30T01:01:00Z")
 
             request.recordDispatchAttempt(firstAttemptAt)
-            request.scheduleRetry(secondAttemptAt)
+            request.scheduleRetry(secondAttemptAt, "첫 발행 실패")
             request.recordDispatchAttempt(secondAttemptAt)
 
             assertThat(request.attemptCount).isEqualTo(2)
@@ -82,17 +82,18 @@ class AnalysisRequestTests {
             val request = createRequest()
             val retryAt = Instant.parse("2026-08-30T01:00:05Z")
 
-            request.scheduleRetry(retryAt)
+            request.scheduleRetry(retryAt, "일시적인 발행 실패")
 
             assertThat(request.status).isEqualTo(AnalysisRequestStatus.QUEUED)
             assertThat(request.nextRetryAt).isEqualTo(retryAt)
+            assertThat(request.errorMessage).isEqualTo("일시적인 발행 실패")
         }
 
         @Test
         fun `FAILED로 변경하면 완료 시각과 오류 메시지를 기록한다`() {
             val request = createRequest()
             val retryAt = Instant.parse("2026-08-30T01:00:05Z")
-            request.scheduleRetry(retryAt)
+            request.scheduleRetry(retryAt, "일시적인 발행 실패")
             val before = Instant.now()
 
             request.markAsFailed("분석 입력 생성 실패")
@@ -196,7 +197,7 @@ class AnalysisRequestTests {
         val apply: (AnalysisRequest) -> Unit,
     ) {
         RECORD_DISPATCH_ATTEMPT(setOf(AnalysisRequestStatus.QUEUED), { it.recordDispatchAttempt(Instant.EPOCH) }),
-        SCHEDULE_RETRY(setOf(AnalysisRequestStatus.QUEUED), { it.scheduleRetry(Instant.EPOCH) }),
+        SCHEDULE_RETRY(setOf(AnalysisRequestStatus.QUEUED), { it.scheduleRetry(Instant.EPOCH, "발행 실패") }),
         MARK_RUNNING(setOf(AnalysisRequestStatus.QUEUED), AnalysisRequest::markAsRunning),
         MARK_DONE(setOf(AnalysisRequestStatus.RUNNING), AnalysisRequest::markAsDone),
         COMPLETE(setOf(AnalysisRequestStatus.RUNNING), { it.complete("분석 결과") }),
