@@ -12,6 +12,9 @@ import pizza.psycho.sos.analysis.application.service.dto.SprintAnalysisInput
 import pizza.psycho.sos.analysis.domain.entity.AnalysisRequest
 import pizza.psycho.sos.analysis.domain.vo.AnalysisRequestStatus
 import pizza.psycho.sos.analysis.infrastructure.persistence.AnalysisRequestRepository
+import java.time.Clock
+import java.time.Instant
+import java.time.ZoneOffset
 import java.util.UUID
 
 /** [AnalysisDispatcherService]가 선점한 batch를 서로 독립적으로 처리하는지 검증한다. */
@@ -23,7 +26,7 @@ class AnalysisDispatcherServiceTests {
         val secondRequest = createQueuedRequest()
         val firstInput = createInput(firstRequest)
         val secondInput = createInput(secondRequest)
-        every { fixture.repository.claimQueued(2) } returns listOf(firstRequest, secondRequest)
+        every { fixture.repository.claimDispatchableRequests(TEST_NOW, 2) } returns listOf(firstRequest, secondRequest)
         every { fixture.metricService.buildInput(firstRequest.workspaceId, firstRequest.targetId) } returns firstInput
         every { fixture.metricService.buildInput(secondRequest.workspaceId, secondRequest.targetId) } returns secondInput
         every {
@@ -38,7 +41,7 @@ class AnalysisDispatcherServiceTests {
         assertThat(firstRequest.status).isEqualTo(AnalysisRequestStatus.RUNNING)
         assertThat(secondRequest.status).isEqualTo(AnalysisRequestStatus.RUNNING)
         verifySequence {
-            fixture.repository.claimQueued(2)
+            fixture.repository.claimDispatchableRequests(TEST_NOW, 2)
             fixture.metricService.buildInput(firstRequest.workspaceId, firstRequest.targetId)
             fixture.analysisRequestPublisher.publish(firstRequest.workspaceId, firstRequest.requiredId, firstInput)
             fixture.metricService.buildInput(secondRequest.workspaceId, secondRequest.targetId)
@@ -53,7 +56,8 @@ class AnalysisDispatcherServiceTests {
         val successfulRequest = createQueuedRequest()
         val failedInput = createInput(failedRequest)
         val successfulInput = createInput(successfulRequest)
-        every { fixture.repository.claimQueued(2) } returns listOf(failedRequest, successfulRequest)
+        every { fixture.repository.claimDispatchableRequests(TEST_NOW, 2) } returns
+            listOf(failedRequest, successfulRequest)
         every { fixture.metricService.buildInput(failedRequest.workspaceId, failedRequest.targetId) } returns failedInput
         every { fixture.metricService.buildInput(successfulRequest.workspaceId, successfulRequest.targetId) } returns successfulInput
         val publishException = IllegalStateException("SQS 전송 실패")
@@ -84,7 +88,7 @@ class AnalysisDispatcherServiceTests {
     @Test
     fun `선점할 요청이 없으면 입력을 계산하거나 SQS로 전송하지 않는다`() {
         val fixture = DispatcherFixture()
-        every { fixture.repository.claimQueued(10) } returns emptyList()
+        every { fixture.repository.claimDispatchableRequests(TEST_NOW, 10) } returns emptyList()
 
         fixture.service.dispatchBatch(batchSize = 10)
 
@@ -97,8 +101,11 @@ private class DispatcherFixture {
     val repository = mockk<AnalysisRequestRepository>()
     val metricService = mockk<SprintAnalysisMetricService>()
     val analysisRequestPublisher = mockk<AnalysisRequestPublisher>()
-    val service = AnalysisDispatcherService(repository, metricService, analysisRequestPublisher)
+    val clock: Clock = Clock.fixed(TEST_NOW, ZoneOffset.UTC)
+    val service = AnalysisDispatcherService(repository, metricService, analysisRequestPublisher, clock)
 }
+
+private val TEST_NOW: Instant = Instant.parse("2026-08-31T01:00:00Z")
 
 private val AnalysisRequest.requiredId: UUID
     get() = requireNotNull(id)

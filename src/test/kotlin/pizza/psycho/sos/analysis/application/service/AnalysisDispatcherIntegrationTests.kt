@@ -17,6 +17,8 @@ import pizza.psycho.sos.analysis.application.service.dto.SprintAnalysisInput
 import pizza.psycho.sos.analysis.domain.entity.AnalysisRequest
 import pizza.psycho.sos.analysis.domain.vo.AnalysisRequestStatus
 import pizza.psycho.sos.analysis.infrastructure.persistence.AnalysisRequestRepository
+import java.time.Clock
+import java.time.Instant
 import java.util.UUID
 
 @Tag("integration")
@@ -40,8 +42,12 @@ class AnalysisDispatcherIntegrationTests {
     @MockkBean
     private lateinit var analysisRequestPublisher: AnalysisRequestPublisher
 
+    @MockkBean
+    private lateinit var clock: Clock
+
     @Test
     fun `SQS 전송에 성공한 요청만 RUNNING으로 저장한다`() {
+        every { clock.instant() } returns Instant.parse("2026-08-31T01:00:00Z")
         val successfulRequest = saveQueuedRequest()
         val failedRequest = saveQueuedRequest()
         val successfulInput = createInput(successfulRequest)

@@ -61,7 +61,8 @@ class AnalysisRequestRepositoryPostgresTests : PostgresTestContainerSupport() {
     }
 
     @Test
-    fun `QUEUED 요청을 선점하면 batch 크기만큼 반환한다`() {
+    fun `발행 가능한 QUEUED 요청을 선점하면 batch 크기만큼 반환한다`() {
+        val now = Instant.parse("2026-08-31T01:00:00Z")
         val queuedRequests =
             analysisRequestRepository.saveAllAndFlush(
                 List(3) { newAnalysisRequest() },
@@ -73,12 +74,39 @@ class AnalysisRequestRepositoryPostgresTests : PostgresTestContainerSupport() {
         val claimed =
             TransactionTemplate(transactionManager)
                 .execute {
-                    analysisRequestRepository.claimQueued(batchSize = 2)
+                    analysisRequestRepository.claimDispatchableRequests(now = now, batchSize = 2)
                 }.orEmpty()
 
         assertThat(claimed)
             .hasSize(2)
             .allMatch { it in queuedRequests }
+    }
+
+    @Test
+    fun `다음 재시도 시각이 지나지 않은 QUEUED 요청은 선점하지 않는다`() {
+        val now = Instant.parse("2026-08-31T01:00:00Z")
+        val firstAttempt = now.minusSeconds(5)
+        val retryableRequest =
+            newAnalysisRequest().apply {
+                recordDispatchAttempt(firstAttempt)
+                scheduleRetry(now)
+            }
+        val waitingRequest =
+            newAnalysisRequest().apply {
+                recordDispatchAttempt(firstAttempt)
+                scheduleRetry(now.plusSeconds(1))
+            }
+        val newRequest = newAnalysisRequest()
+        analysisRequestRepository.saveAllAndFlush(listOf(retryableRequest, waitingRequest, newRequest))
+
+        val claimed =
+            TransactionTemplate(transactionManager)
+                .execute {
+                    analysisRequestRepository.claimDispatchableRequests(now = now, batchSize = 10)
+                }.orEmpty()
+
+        assertThat(claimed).containsExactlyInAnyOrder(retryableRequest, newRequest)
+        assertThat(claimed).doesNotContain(waitingRequest)
     }
 
     @Test
@@ -116,7 +144,10 @@ class AnalysisRequestRepositoryPostgresTests : PostgresTestContainerSupport() {
                     // TX1 실행
                     transactionTemplate
                         .execute {
-                            val ids = analysisRequestRepository.claimQueued(batchSize = 1).map { it.id!! }
+                            val ids =
+                                analysisRequestRepository
+                                    .claimDispatchableRequests(now = Instant.now(), batchSize = 1)
+                                    .map { it.id!! }
 
                             // TX1이 row 선점을 완료했음을 테스트 스레드에 알린다.
                             firstClaimed.countDown()
@@ -136,7 +167,9 @@ class AnalysisRequestRepositoryPostgresTests : PostgresTestContainerSupport() {
                 executor.submit<List<UUID>> {
                     transactionTemplate
                         .execute {
-                            analysisRequestRepository.claimQueued(batchSize = 1).map { it.id!! }
+                            analysisRequestRepository
+                                .claimDispatchableRequests(now = Instant.now(), batchSize = 1)
+                                .map { it.id!! }
                         }.orEmpty()
                 }
 

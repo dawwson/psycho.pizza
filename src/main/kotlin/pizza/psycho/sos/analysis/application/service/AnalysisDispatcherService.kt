@@ -7,18 +7,20 @@ import pizza.psycho.sos.analysis.application.port.AnalysisRequestPublisher
 import pizza.psycho.sos.analysis.domain.entity.AnalysisRequest
 import pizza.psycho.sos.analysis.infrastructure.persistence.AnalysisRequestRepository
 import pizza.psycho.sos.common.support.log.loggerDelegate
+import java.time.Clock
 
 @Service
 class AnalysisDispatcherService(
     private val analysisRequestRepository: AnalysisRequestRepository,
     private val sprintAnalysisMetricService: SprintAnalysisMetricService,
     private val analysisRequestPublisher: AnalysisRequestPublisher,
+    private val clock: Clock,
 ) {
     private val log by loggerDelegate()
 
     @Transactional
     fun dispatchBatch(batchSize: Int) {
-        val claimedRequests = analysisRequestRepository.claimQueued(batchSize)
+        val claimedRequests = analysisRequestRepository.claimDispatchableRequests(clock.instant(), batchSize)
 
         claimedRequests.forEach { request ->
             try {
