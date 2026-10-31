@@ -6,6 +6,7 @@ import org.springframework.context.annotation.Configuration
 import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider
 import software.amazon.awssdk.regions.Region
 import software.amazon.awssdk.services.sqs.SqsAsyncClient
+import java.net.URI
 
 @Configuration
 class AwsConfig {
@@ -13,10 +14,16 @@ class AwsConfig {
     private lateinit var region: String
 
     @Bean
-    fun sqsAsyncClient(): SqsAsyncClient =
+    fun sqsAsyncClient(
+        @Value("\${sqs.endpoint:}") endpoint: String,
+    ): SqsAsyncClient =
         SqsAsyncClient
             .builder()
             .region(Region.of(region))
             .credentialsProvider(DefaultCredentialsProvider.create())
-            .build()
+            .apply {
+                if (endpoint.isNotBlank()) {
+                    endpointOverride(URI.create(endpoint))
+                }
+            }.build()
 }

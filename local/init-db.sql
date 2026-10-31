@@ -1,0 +1,2 @@
+CREATE DATABASE pizza;
+CREATE DATABASE pickle;
