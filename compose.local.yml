@@ -1,0 +1,179 @@
+name: psycho-local
+
+x-aws: &aws
+  AWS_ACCESS_KEY_ID: local
+  AWS_SECRET_ACCESS_KEY: local
+  AWS_REGION: ap-northeast-2
+  AWS_DEFAULT_REGION: ap-northeast-2
+  AWS_EC2_METADATA_DISABLED: "true"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: psycho
+      POSTGRES_PASSWORD: local-only
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./local/init-db.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U psycho -d pizza"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  sqs:
+    image: softwaremill/elasticmq:1.6.16
+    ports:
+      - "127.0.0.1:9324:9324"
+      - "127.0.0.1:9325:9325"
+    volumes:
+      - ./local/elasticmq.conf:/opt/elasticmq.conf:ro
+
+  mail:
+    image: axllent/mailpit:v1.27
+    ports:
+      - "127.0.0.1:8025:8025"
+
+  pizza:
+    image: eclipse-temurin:21-jdk
+    working_dir: /workspace
+    command: [sh, -c, "./gradlew --no-daemon bootRun"]
+    environment:
+      <<: *aws
+      SPRING_PROFILES_ACTIVE: prod
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/pizza
+      SPRING_DATASOURCE_USERNAME: psycho
+      SPRING_DATASOURCE_PASSWORD: local-only
+      SPRING_MAIL_HOST: mail
+      SPRING_MAIL_PORT: "1025"
+      SPRING_MAIL_PROPERTIES_MAIL_SMTP_AUTH: "false"
+      SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_ENABLE: "false"
+      MAIL_USERNAME: local@psycho.test
+      MAIL_PASSWORD: local-only
+      MAIL_TOKEN_VERIFY_BASE_URL: http://localhost:8080/api/v1/mails/verify
+      MAIL_TOKEN_FRONTEND_BASE_URL: http://localhost:3000
+      JWT_ISSUER: psycho-local
+      JWT_ACCESS_TOKEN_VALIDITY_SECONDS: "3600"
+      JWT_REFRESH_TOKEN_VALIDITY_SECONDS: "604800"
+      JWT_REFRESH_COOKIE_NAME: refresh_token
+      JWT_REFRESH_COOKIE_PATH: /
+      JWT_REFRESH_COOKIE_SAME_SITE: Lax
+      JWT_REFRESH_COOKIE_SECURE: "false"
+      JWT_SECRET: local-development-only-signing-key-not-for-production-0123456789abcdef
+      OTP_LENGTH: "6"
+      OTP_TTL_SECONDS: "300"
+      OTP_MAX_ATTEMPTS: "5"
+      OTP_REQUEST_COOLDOWN: "30"
+      CONFIRMATION_TOKEN_TTL_SECONDS: "600"
+      OPENAI_API_KEY: ${LOCAL_OPENAI_API_KEY:-local-disabled}
+      SQS_ENDPOINT: http://sqs:9324
+      REQUEST_QUEUE_NAME: analysis-request
+      BUSINESS_NOTIFY_URL: http://sqs:9324/000000000000/analysis-response
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - .:/workspace:ro
+      - pizza-build:/workspace/build
+      - pizza-project-gradle:/workspace/.gradle
+      - pizza-kotlin:/workspace/.kotlin
+      - gradle-cache:/root/.gradle
+    depends_on:
+      postgres:
+        condition: service_healthy
+      sqs:
+        condition: service_started
+      mail:
+        condition: service_started
+    healthcheck:
+      test: [CMD, curl, -fsS, http://localhost:8080/actuator/health]
+      interval: 10s
+      timeout: 5s
+      retries: 60
+      start_period: 60s
+
+  pickle:
+    image: ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+    working_dir: /workspace
+    command: [sh, -c, "uv sync --frozen --no-dev && exec uv run --no-sync uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+    environment:
+      <<: *aws
+      UV_PROJECT_ENVIRONMENT: /opt/venv
+      UV_CACHE_DIR: /opt/uv-cache
+      PYTHONDONTWRITEBYTECODE: "1"
+      DATABASE_URL: postgresql+asyncpg://psycho:local-only@postgres:5432/pickle
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: pickle
+      DB_USERNAME: psycho
+      DB_PASSWORD: local-only
+      DB_AUTO_CREATE_TABLES: "true"
+      OPENAI_API_KEY: ${LOCAL_OPENAI_API_KEY:-}
+      OPENAI_WEBHOOK_SECRET: local-disabled
+      ENABLE_INPROCESS_WORKER: ${LOCAL_ENABLE_WORKER:-false}
+      AWS_ENDPOINT_URL_SQS: http://sqs:9324
+      SQS_LISTENER_QUEUE_URL: http://sqs:9324/000000000000/analysis-request
+      BUSINESS_NOTIFY_SQS_QUEUE_URL: http://sqs:9324/000000000000/analysis-response
+      BUSINESS_NOTIFY_URL: ""
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ../psycho.pickle:/workspace:ro
+      - pickle-venv:/opt/venv
+      - uv-cache:/opt/uv-cache
+    depends_on:
+      postgres:
+        condition: service_healthy
+      sqs:
+        condition: service_started
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+  box:
+    image: node:20-bookworm-slim
+    working_dir: /workspace
+    command:
+      - sh
+      - -c
+      - >-
+        cp /source/package.json /source/package-lock.json /source/tsconfig.json
+        /source/next.config.ts /source/next-env.d.ts /source/postcss.config.mjs
+        /source/eslint.config.mjs /workspace/ &&
+        npm ci && exec npm run dev -- --hostname 0.0.0.0
+    environment:
+      BACKEND_API_URL: http://pizza:8080
+      BACKEND_REFRESH_COOKIE_NAME: refresh_token
+      NEXT_TELEMETRY_DISABLED: "1"
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - ../psycho.box:/source:ro
+      - box-workspace:/workspace
+      - ../psycho.box/src:/workspace/src:ro
+      - npm-cache:/root/.npm
+    depends_on:
+      pizza:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://localhost:3000').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 10s
+      retries: 30
+      start_period: 60s
+
+volumes:
+  postgres-data:
+  pizza-build:
+  pizza-project-gradle:
+  pizza-kotlin:
+  gradle-cache:
+  pickle-venv:
+  uv-cache:
+  box-workspace:
+  npm-cache:

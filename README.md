@@ -50,6 +50,8 @@ src/main/resources/
 
 ## 실행 환경
 
+Box·Pizza·Pickle을 로컬 PostgreSQL·SQS와 함께 실행하려면 [로컬 통합 실행](local/README.md)을 따른다.
+
 다음 도구와 외부 자원이 필요합니다.
 
 - JDK 21
