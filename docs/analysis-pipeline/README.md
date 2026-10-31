@@ -77,7 +77,8 @@ sequenceDiagram
 | Pizza lifecycle 동작 고정 | [Pizza #2](https://github.com/dawwson/psycho.pizza/issues/2) | 완료 |
 | Pickle 작업 처리·복구 동작 고정 | [Pickle #1](https://github.com/dawwson/psycho.pickle/issues/1) | 완료 |
 | Pizza DB Dispatcher | [Pizza #20](https://github.com/dawwson/psycho.pizza/issues/20) | 완료 |
-| Pizza 발행 retry와 `stale job` 복구 | [Pizza #21](https://github.com/dawwson/psycho.pizza/issues/21) | 현재 브랜치에서 구현, 이슈 OPEN |
+| Pizza 발행 retry와 `stale job` 복구 | [Pizza #21](https://github.com/dawwson/psycho.pizza/issues/21) | 구현 |
+| SQS 전송 오류 분류 보완 | [Pizza #35](https://github.com/dawwson/psycho.pizza/issues/35) | 현재 브랜치에서 구현·검증 |
 | Pizza 결과 실패 계약과 멱등 처리 | [Pizza #22](https://github.com/dawwson/psycho.pizza/issues/22) | OPEN |
 | Pizza–Pickle contract 검증 | [Pizza #18](https://github.com/dawwson/psycho.pizza/issues/18) | OPEN |
 | Pickle 제출·통지·복구 책임 분리 | [Pickle #5](https://github.com/dawwson/psycho.pickle/issues/5) | OPEN |
